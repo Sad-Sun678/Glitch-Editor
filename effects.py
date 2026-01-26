@@ -29,7 +29,86 @@ def show_motion_mask_effect(gray, prev_gray, frame):
     output[motion_strength > 25] = color_map[motion_strength > 25]
 
     return output
-def cycle_masks(gray, prev_gray, frame,chosen_preset):
+def brightness(row):
+    # row: (N, 3) BGR
+    return row[:, 0] * 0.114 + row[:, 1] * 0.587 + row[:, 2] * 0.299
+def pixel_sort_horizontal(frame, motion_mask, thresh=40, min_len=12):
+    h, w, _ = frame.shape
+    output = frame.copy()
+
+    for y in range(h):
+        mask_row = motion_mask[y] > 0
+        x = 0
+
+        while x < w:
+            if not mask_row[x]:
+                x += 1
+                continue
+
+            # start of motion segment
+            start = x
+            while x < w and mask_row[x]:
+                x += 1
+            end = x
+
+            if end - start < min_len:
+                continue
+
+            segment = output[y, start:end]
+
+            # brightness threshold gating
+            b = brightness(segment)
+            valid = b > thresh
+            if valid.sum() < min_len:
+                continue
+
+            sortable = segment[valid]
+            order = np.argsort(brightness(sortable))
+            sortable_sorted = sortable[order]
+
+            segment[valid] = sortable_sorted
+            output[y, start:end] = segment
+
+    return output
+def pixel_sort_vertical(frame, motion_mask, thresh=40, min_len=12):
+    h, w, _ = frame.shape
+    output = frame.copy()
+
+    for x in range(w):
+        mask_col = motion_mask[:, x] > 0
+        y = 0
+
+        while y < h:
+            if not mask_col[y]:
+                y += 1
+                continue
+
+            # start of motion segment
+            start = y
+            while y < h and mask_col[y]:
+                y += 1
+            end = y
+
+            if end - start < min_len:
+                continue
+
+            segment = output[start:end, x]
+
+            # brightness threshold gating
+            b = brightness(segment)
+            valid = b > thresh
+            if valid.sum() < min_len:
+                continue
+
+            sortable = segment[valid]
+            order = np.argsort(brightness(sortable))
+            sortable_sorted = sortable[order]
+
+            segment[valid] = sortable_sorted
+            output[start:end, x] = segment
+
+    return output
+def cycle_masks(gray, prev_gray, frame, preset_a, preset_b, t):
     presets = {
         0: cv.COLORMAP_AUTUMN,
         1: cv.COLORMAP_BONE,
@@ -54,13 +133,21 @@ def cycle_masks(gray, prev_gray, frame,chosen_preset):
         20: cv.COLORMAP_TURBO,
         21: cv.COLORMAP_DEEPGREEN,
     }
-    diff = cv.absdiff(gray,prev_gray)
-    motion_strength = cv.normalize(diff,None,0,255, cv.NORM_MINMAX)
+    diff = cv.absdiff(gray, prev_gray)
+    motion_strength = cv.normalize(diff, None, 0, 255, cv.NORM_MINMAX)
+    motion_strength = motion_strength.astype(np.uint8)
 
-    _, motion_mask = cv.threshold(diff, 25,255,cv.THRESH_BINARY)
-    color_map = cv.applyColorMap(motion_strength,presets[chosen_preset])
+    _, motion_mask = cv.threshold(diff, 25, 255, cv.THRESH_BINARY)
+
+    color_a = cv.applyColorMap(motion_strength, presets[preset_a])
+    color_b = cv.applyColorMap(motion_strength, presets[preset_b])
+
+    # crossfade
+    color_map = cv.addWeighted(color_a, 1 - t, color_b, t, 0)
+
     output = frame.copy()
     output[motion_strength > 25] = color_map[motion_strength > 25]
+
     return output
 
 def delay_echo(frame, buffer, alpha=0.6):
@@ -144,3 +231,30 @@ def change_knob(direction,targets):
 
     return new_values
 
+def datamosh_vector(frame, prev_gray, motion_mask, strength=8):
+    gray = cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
+
+    flow = cv.calcOpticalFlowFarneback(
+        prev_gray, gray,
+        None, 0.5, 3, 15, 3, 5, 1.2, 0
+    )
+
+    h, w = gray.shape
+    output = frame.copy()
+
+    # grid of coordinates
+    ys, xs = np.mgrid[0:h, 0:w]
+
+    # flow vectors
+    dx = flow[..., 0]
+    dy = flow[..., 1]
+
+    # source coordinates
+    src_x = np.clip((xs - dx * strength).astype(np.int32), 0, w - 1)
+    src_y = np.clip((ys - dy * strength).astype(np.int32), 0, h - 1)
+
+    # apply only where motion exists
+    mask = motion_mask > 0
+    output[mask] = frame[src_y[mask], src_x[mask]]
+
+    return output
