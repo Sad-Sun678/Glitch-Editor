@@ -9,7 +9,18 @@ import threading
 import subprocess
 import os
 import shutil
+import tempfile
 from effects import change_knob
+
+# Try to import pygame for audio playback
+try:
+    import pygame
+    pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=512)
+    PYGAME_AVAILABLE = True
+except ImportError:
+    PYGAME_AVAILABLE = False
+    print("pygame not installed - audio preview will be limited")
+
 print("ffmpeg path:", shutil.which("ffmpeg"))
 
 # Track key states to detect single taps vs held keys
@@ -412,6 +423,732 @@ class EffectControlPanel:
                 pass
 
 
+class AudioEffectsPanel:
+    """A GUI panel for audio preview and effects."""
+
+    def __init__(self, video_source_path=None):
+        self.video_source_path = video_source_path
+        self.root = None
+        self.running = False
+        self.temp_dir = tempfile.mkdtemp()
+        self.original_audio_path = None
+        self.preview_audio_path = None
+        self.processed_audio_path = None  # The "kept" audio for final render
+        self.is_playing = False
+        self.is_extracting = False
+        self.is_processing = False
+        self.preview_counter = 0  # For unique preview filenames
+        self.pending_status = None  # For thread-safe status updates
+
+        # Audio effect parameters
+        self.audio_params = {
+            'speed': 1.0,           # 0.5 to 2.0
+            'pitch': 1.0,           # 0.5 to 2.0
+            'bass': 0,              # -20 to 20 dB
+            'treble': 0,            # -20 to 20 dB
+            'echo_delay': 0,        # 0 to 1000 ms
+            'echo_decay': 0.0,      # 0 to 0.9
+            'reverb': 0,            # 0 to 100
+            'distortion': 0,        # 0 to 100
+            'lowpass': 20000,       # 200 to 20000 Hz
+            'highpass': 20,         # 20 to 5000 Hz
+            'volume': 1.0,          # 0 to 2.0
+            'reverse': False,
+            'bitcrush': 16,         # 4 to 16 bits
+            'flanger_delay': 0,     # 0 to 20 ms
+            'flanger_depth': 0,     # 0 to 10
+            'tremolo_freq': 0,      # 0 to 20 Hz
+            'tremolo_depth': 0.0,   # 0 to 1.0
+            'vibrato_freq': 0,      # 0 to 20 Hz
+            'vibrato_depth': 0.0,   # 0 to 1.0
+            'phaser_speed': 0.0,    # 0 to 2 Hz
+            'chorus_depth': 0,      # 0 to 10 ms
+            'noise_amount': 0,      # 0 to 100
+            'telephone': False,
+            'mono': False,
+        }
+
+        self.slider_vars = {}
+        self.presets = {
+            'Normal': {'speed': 1.0, 'pitch': 1.0, 'bass': 0, 'treble': 0, 'echo_delay': 0,
+                      'echo_decay': 0.0, 'reverb': 0, 'distortion': 0, 'lowpass': 20000,
+                      'highpass': 20, 'volume': 1.0, 'reverse': False, 'bitcrush': 16,
+                      'flanger_delay': 0, 'flanger_depth': 0, 'tremolo_freq': 0, 'tremolo_depth': 0.0,
+                      'vibrato_freq': 0, 'vibrato_depth': 0.0, 'phaser_speed': 0.0, 'chorus_depth': 0,
+                      'noise_amount': 0, 'telephone': False, 'mono': False},
+            'Underwater': {'speed': 0.9, 'pitch': 0.85, 'bass': 10, 'treble': -15, 'echo_delay': 100,
+                          'echo_decay': 0.4, 'reverb': 60, 'distortion': 0, 'lowpass': 800,
+                          'highpass': 20, 'volume': 1.0, 'reverse': False, 'bitcrush': 16,
+                          'flanger_delay': 5, 'flanger_depth': 3, 'tremolo_freq': 0, 'tremolo_depth': 0.0,
+                          'vibrato_freq': 2, 'vibrato_depth': 0.3, 'phaser_speed': 0.3, 'chorus_depth': 4,
+                          'noise_amount': 0, 'telephone': False, 'mono': False},
+            'Radio': {'speed': 1.0, 'pitch': 1.0, 'bass': -10, 'treble': 5, 'echo_delay': 0,
+                     'echo_decay': 0.0, 'reverb': 0, 'distortion': 10, 'lowpass': 4000,
+                     'highpass': 300, 'volume': 1.0, 'reverse': False, 'bitcrush': 16,
+                     'flanger_delay': 0, 'flanger_depth': 0, 'tremolo_freq': 0, 'tremolo_depth': 0.0,
+                     'vibrato_freq': 0, 'vibrato_depth': 0.0, 'phaser_speed': 0.0, 'chorus_depth': 0,
+                     'noise_amount': 15, 'telephone': False, 'mono': True},
+            'Cave Echo': {'speed': 1.0, 'pitch': 0.95, 'bass': 5, 'treble': -5, 'echo_delay': 300,
+                         'echo_decay': 0.6, 'reverb': 80, 'distortion': 0, 'lowpass': 20000,
+                         'highpass': 20, 'volume': 0.9, 'reverse': False, 'bitcrush': 16,
+                         'flanger_delay': 0, 'flanger_depth': 0, 'tremolo_freq': 0, 'tremolo_depth': 0.0,
+                         'vibrato_freq': 0, 'vibrato_depth': 0.0, 'phaser_speed': 0.0, 'chorus_depth': 0,
+                         'noise_amount': 0, 'telephone': False, 'mono': False},
+            'Chipmunk': {'speed': 1.3, 'pitch': 1.5, 'bass': -5, 'treble': 10, 'echo_delay': 0,
+                        'echo_decay': 0.0, 'reverb': 0, 'distortion': 0, 'lowpass': 20000,
+                        'highpass': 20, 'volume': 1.0, 'reverse': False, 'bitcrush': 16,
+                        'flanger_delay': 0, 'flanger_depth': 0, 'tremolo_freq': 0, 'tremolo_depth': 0.0,
+                        'vibrato_freq': 0, 'vibrato_depth': 0.0, 'phaser_speed': 0.0, 'chorus_depth': 0,
+                        'noise_amount': 0, 'telephone': False, 'mono': False},
+            'Deep Voice': {'speed': 0.85, 'pitch': 0.7, 'bass': 15, 'treble': -10, 'echo_delay': 0,
+                          'echo_decay': 0.0, 'reverb': 20, 'distortion': 0, 'lowpass': 20000,
+                          'highpass': 20, 'volume': 1.0, 'reverse': False, 'bitcrush': 16,
+                          'flanger_delay': 0, 'flanger_depth': 0, 'tremolo_freq': 0, 'tremolo_depth': 0.0,
+                          'vibrato_freq': 0, 'vibrato_depth': 0.0, 'phaser_speed': 0.0, 'chorus_depth': 0,
+                          'noise_amount': 0, 'telephone': False, 'mono': False},
+            'Robot': {'speed': 1.0, 'pitch': 1.0, 'bass': 0, 'treble': 0, 'echo_delay': 50,
+                     'echo_decay': 0.5, 'reverb': 30, 'distortion': 30, 'lowpass': 5000,
+                     'highpass': 200, 'volume': 1.0, 'reverse': False, 'bitcrush': 8,
+                     'flanger_delay': 2, 'flanger_depth': 2, 'tremolo_freq': 8, 'tremolo_depth': 0.3,
+                     'vibrato_freq': 0, 'vibrato_depth': 0.0, 'phaser_speed': 0.0, 'chorus_depth': 0,
+                     'noise_amount': 5, 'telephone': False, 'mono': False},
+            'VHS Tape': {'speed': 0.98, 'pitch': 0.98, 'bass': 5, 'treble': -8, 'echo_delay': 20,
+                        'echo_decay': 0.2, 'reverb': 10, 'distortion': 15, 'lowpass': 8000,
+                        'highpass': 80, 'volume': 0.9, 'reverse': False, 'bitcrush': 12,
+                        'flanger_delay': 3, 'flanger_depth': 2, 'tremolo_freq': 0, 'tremolo_depth': 0.0,
+                        'vibrato_freq': 1, 'vibrato_depth': 0.1, 'phaser_speed': 0.0, 'chorus_depth': 2,
+                        'noise_amount': 20, 'telephone': False, 'mono': False},
+            'Nightmare': {'speed': 0.7, 'pitch': 0.6, 'bass': 15, 'treble': -10, 'echo_delay': 400,
+                         'echo_decay': 0.7, 'reverb': 90, 'distortion': 20, 'lowpass': 3000,
+                         'highpass': 20, 'volume': 0.8, 'reverse': False, 'bitcrush': 16,
+                         'flanger_delay': 8, 'flanger_depth': 5, 'tremolo_freq': 3, 'tremolo_depth': 0.4,
+                         'vibrato_freq': 2, 'vibrato_depth': 0.5, 'phaser_speed': 0.5, 'chorus_depth': 5,
+                         'noise_amount': 10, 'telephone': False, 'mono': False},
+            'Lo-Fi': {'speed': 1.0, 'pitch': 1.0, 'bass': 5, 'treble': -12, 'echo_delay': 0,
+                     'echo_decay': 0.0, 'reverb': 15, 'distortion': 5, 'lowpass': 3500,
+                     'highpass': 100, 'volume': 0.85, 'reverse': False, 'bitcrush': 10,
+                     'flanger_delay': 0, 'flanger_depth': 0, 'tremolo_freq': 0, 'tremolo_depth': 0.0,
+                     'vibrato_freq': 0, 'vibrato_depth': 0.0, 'phaser_speed': 0.0, 'chorus_depth': 0,
+                     'noise_amount': 25, 'telephone': False, 'mono': False},
+            'Telephone': {'speed': 1.0, 'pitch': 1.0, 'bass': -15, 'treble': -5, 'echo_delay': 0,
+                         'echo_decay': 0.0, 'reverb': 0, 'distortion': 5, 'lowpass': 3400,
+                         'highpass': 400, 'volume': 1.0, 'reverse': False, 'bitcrush': 14,
+                         'flanger_delay': 0, 'flanger_depth': 0, 'tremolo_freq': 0, 'tremolo_depth': 0.0,
+                         'vibrato_freq': 0, 'vibrato_depth': 0.0, 'phaser_speed': 0.0, 'chorus_depth': 0,
+                         'noise_amount': 10, 'telephone': True, 'mono': True},
+            'Haunted': {'speed': 0.9, 'pitch': 0.85, 'bass': 8, 'treble': -5, 'echo_delay': 250,
+                       'echo_decay': 0.5, 'reverb': 70, 'distortion': 10, 'lowpass': 6000,
+                       'highpass': 50, 'volume': 0.85, 'reverse': False, 'bitcrush': 16,
+                       'flanger_delay': 10, 'flanger_depth': 4, 'tremolo_freq': 4, 'tremolo_depth': 0.3,
+                       'vibrato_freq': 3, 'vibrato_depth': 0.4, 'phaser_speed': 0.8, 'chorus_depth': 6,
+                       'noise_amount': 5, 'telephone': False, 'mono': False},
+            'Alien': {'speed': 1.1, 'pitch': 1.3, 'bass': -5, 'treble': 8, 'echo_delay': 80,
+                     'echo_decay': 0.3, 'reverb': 40, 'distortion': 15, 'lowpass': 12000,
+                     'highpass': 200, 'volume': 1.0, 'reverse': False, 'bitcrush': 12,
+                     'flanger_delay': 15, 'flanger_depth': 8, 'tremolo_freq': 6, 'tremolo_depth': 0.2,
+                     'vibrato_freq': 8, 'vibrato_depth': 0.6, 'phaser_speed': 1.5, 'chorus_depth': 8,
+                     'noise_amount': 0, 'telephone': False, 'mono': False},
+            'Broken Speaker': {'speed': 1.0, 'pitch': 1.0, 'bass': 10, 'treble': -15, 'echo_delay': 0,
+                              'echo_decay': 0.0, 'reverb': 0, 'distortion': 60, 'lowpass': 2500,
+                              'highpass': 100, 'volume': 0.9, 'reverse': False, 'bitcrush': 6,
+                              'flanger_delay': 0, 'flanger_depth': 0, 'tremolo_freq': 12, 'tremolo_depth': 0.5,
+                              'vibrato_freq': 0, 'vibrato_depth': 0.0, 'phaser_speed': 0.0, 'chorus_depth': 0,
+                              'noise_amount': 40, 'telephone': False, 'mono': True},
+            'Dreamy': {'speed': 0.95, 'pitch': 1.05, 'bass': 3, 'treble': 5, 'echo_delay': 150,
+                      'echo_decay': 0.4, 'reverb': 60, 'distortion': 0, 'lowpass': 15000,
+                      'highpass': 20, 'volume': 0.9, 'reverse': False, 'bitcrush': 16,
+                      'flanger_delay': 6, 'flanger_depth': 3, 'tremolo_freq': 0, 'tremolo_depth': 0.0,
+                      'vibrato_freq': 1, 'vibrato_depth': 0.15, 'phaser_speed': 0.3, 'chorus_depth': 5,
+                      'noise_amount': 0, 'telephone': False, 'mono': False},
+        }
+
+    def set_video_source(self, path):
+        """Set the video source and extract audio."""
+        self.video_source_path = path
+        if path and os.path.exists(path):
+            self.extract_audio()
+
+    def extract_audio(self):
+        """Extract audio from video file using ffmpeg."""
+        if not self.video_source_path or self.is_extracting:
+            return
+
+        ffmpeg_path = shutil.which("ffmpeg")
+        if not ffmpeg_path:
+            print("FFmpeg not found - cannot extract audio")
+            return
+
+        self.is_extracting = True
+        self.original_audio_path = os.path.join(self.temp_dir, "original_audio.wav")
+
+        def extract_thread():
+            try:
+                cmd = [
+                    "ffmpeg", "-y",
+                    "-i", self.video_source_path,
+                    "-vn",  # No video
+                    "-acodec", "pcm_s16le",
+                    "-ar", "44100",
+                    "-ac", "2",
+                    self.original_audio_path
+                ]
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                if result.returncode == 0:
+                    print(f"Audio extracted to: {self.original_audio_path}")
+                    self.preview_audio_path = self.original_audio_path
+                else:
+                    print(f"Failed to extract audio: {result.stderr}")
+                    self.original_audio_path = None
+            except Exception as e:
+                print(f"Error extracting audio: {e}")
+                self.original_audio_path = None
+            finally:
+                self.is_extracting = False
+
+        thread = threading.Thread(target=extract_thread, daemon=True)
+        thread.start()
+
+    def create_panel(self):
+        """Create the audio effects panel window."""
+        self.root = tk.Toplevel()
+        self.root.title("Audio Effects Panel")
+        self.root.geometry("450x700")
+        self.root.resizable(True, True)
+
+        # Create main container with scrollbar
+        main_frame = tk.Frame(self.root)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        canvas = tk.Canvas(main_frame)
+        scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        scrollbar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+
+        # Title
+        title_label = tk.Label(scrollable_frame, text="Audio Effects", font=("Arial", 14, "bold"))
+        title_label.pack(pady=10)
+
+        # Status label
+        self.status_label = tk.Label(scrollable_frame, text="Loading audio...", font=("Arial", 9), fg="gray")
+        self.status_label.pack(pady=5)
+
+        # Playback controls
+        playback_frame = tk.Frame(scrollable_frame)
+        playback_frame.pack(pady=10, padx=10, fill=tk.X)
+
+        self.play_btn = tk.Button(playback_frame, text="▶ Play", command=self.play_audio,
+                                   width=10, bg="#4CAF50", fg="white")
+        self.play_btn.pack(side=tk.LEFT, padx=5)
+
+        self.stop_btn = tk.Button(playback_frame, text="⬛ Stop", command=self.stop_audio,
+                                   width=10, bg="#f44336", fg="white")
+        self.stop_btn.pack(side=tk.LEFT, padx=5)
+
+        self.preview_btn = tk.Button(playback_frame, text="🔄 Preview Effects", command=self.preview_effects,
+                                      width=15, bg="#2196F3", fg="white")
+        self.preview_btn.pack(side=tk.LEFT, padx=5)
+
+        # Keep button
+        keep_frame = tk.Frame(scrollable_frame)
+        keep_frame.pack(pady=5, padx=10, fill=tk.X)
+
+        self.keep_btn = tk.Button(keep_frame, text="✓ Keep This Audio for Render", command=self.keep_audio,
+                                   bg="#9C27B0", fg="white", font=("Arial", 10, "bold"))
+        self.keep_btn.pack(fill=tk.X)
+
+        self.keep_status = tk.Label(keep_frame, text="Using: Original Audio", font=("Arial", 8), fg="gray")
+        self.keep_status.pack()
+
+        # Separator
+        ttk.Separator(scrollable_frame, orient='horizontal').pack(fill=tk.X, pady=10, padx=10)
+
+        # Presets section
+        preset_frame = tk.LabelFrame(scrollable_frame, text="Presets", font=("Arial", 10, "bold"))
+        preset_frame.pack(pady=5, padx=10, fill=tk.X)
+
+        preset_btn_frame = tk.Frame(preset_frame)
+        preset_btn_frame.pack(pady=5, padx=5, fill=tk.X)
+
+        # Create preset buttons in a grid
+        row = 0
+        col = 0
+        for preset_name in self.presets.keys():
+            btn = tk.Button(preset_btn_frame, text=preset_name, width=12,
+                           command=lambda p=preset_name: self.apply_preset(p))
+            btn.grid(row=row, column=col, padx=2, pady=2)
+            col += 1
+            if col >= 3:
+                col = 0
+                row += 1
+
+        # Separator
+        ttk.Separator(scrollable_frame, orient='horizontal').pack(fill=tk.X, pady=10, padx=10)
+
+        # Effect sliders - Basic
+        basic_frame = tk.LabelFrame(scrollable_frame, text="Basic Effects", font=("Arial", 10, "bold"))
+        basic_frame.pack(pady=5, padx=10, fill=tk.X)
+
+        self.create_slider(basic_frame, 'speed', 'Speed', 0.5, 2.0, 1.0, 0.05)
+        self.create_slider(basic_frame, 'pitch', 'Pitch', 0.5, 2.0, 1.0, 0.05)
+        self.create_slider(basic_frame, 'volume', 'Volume', 0.0, 2.0, 1.0, 0.05)
+        self.create_slider(basic_frame, 'bass', 'Bass (dB)', -20, 20, 0, 1)
+        self.create_slider(basic_frame, 'treble', 'Treble (dB)', -20, 20, 0, 1)
+
+        # Echo & Reverb
+        echo_frame = tk.LabelFrame(scrollable_frame, text="Echo & Reverb", font=("Arial", 10, "bold"))
+        echo_frame.pack(pady=5, padx=10, fill=tk.X)
+
+        self.create_slider(echo_frame, 'echo_delay', 'Echo Delay (ms)', 0, 1000, 0, 10)
+        self.create_slider(echo_frame, 'echo_decay', 'Echo Decay', 0.0, 0.9, 0.0, 0.05)
+        self.create_slider(echo_frame, 'reverb', 'Reverb', 0, 100, 0, 5)
+
+        # Distortion & Degradation
+        distort_frame = tk.LabelFrame(scrollable_frame, text="Distortion & Degradation", font=("Arial", 10, "bold"))
+        distort_frame.pack(pady=5, padx=10, fill=tk.X)
+
+        self.create_slider(distort_frame, 'distortion', 'Distortion', 0, 100, 0, 5)
+        self.create_slider(distort_frame, 'bitcrush', 'Bit Depth', 4, 16, 16, 1)
+        self.create_slider(distort_frame, 'noise_amount', 'Noise/Static', 0, 100, 0, 5)
+
+        # Filters
+        filter_frame = tk.LabelFrame(scrollable_frame, text="Filters", font=("Arial", 10, "bold"))
+        filter_frame.pack(pady=5, padx=10, fill=tk.X)
+
+        self.create_slider(filter_frame, 'lowpass', 'Lowpass (Hz)', 200, 20000, 20000, 100)
+        self.create_slider(filter_frame, 'highpass', 'Highpass (Hz)', 20, 5000, 20, 20)
+
+        # Modulation Effects
+        mod_frame = tk.LabelFrame(scrollable_frame, text="Modulation Effects", font=("Arial", 10, "bold"))
+        mod_frame.pack(pady=5, padx=10, fill=tk.X)
+
+        self.create_slider(mod_frame, 'flanger_delay', 'Flanger Delay', 0, 20, 0, 1)
+        self.create_slider(mod_frame, 'flanger_depth', 'Flanger Depth', 0, 10, 0, 1)
+        self.create_slider(mod_frame, 'tremolo_freq', 'Tremolo Speed', 0, 20, 0, 1)
+        self.create_slider(mod_frame, 'tremolo_depth', 'Tremolo Depth', 0.0, 1.0, 0.0, 0.05)
+        self.create_slider(mod_frame, 'vibrato_freq', 'Vibrato Speed', 0, 20, 0, 1)
+        self.create_slider(mod_frame, 'vibrato_depth', 'Vibrato Depth', 0.0, 1.0, 0.0, 0.05)
+        self.create_slider(mod_frame, 'phaser_speed', 'Phaser Speed', 0.0, 2.0, 0.0, 0.1)
+        self.create_slider(mod_frame, 'chorus_depth', 'Chorus Depth', 0, 10, 0, 1)
+
+        # Checkboxes for toggle effects
+        toggle_frame = tk.LabelFrame(scrollable_frame, text="Toggle Effects", font=("Arial", 10, "bold"))
+        toggle_frame.pack(pady=5, padx=10, fill=tk.X)
+
+        self.reverse_var = tk.BooleanVar(value=False)
+        reverse_cb = tk.Checkbutton(toggle_frame, text="Reverse Audio", variable=self.reverse_var,
+                                     command=lambda: self.update_param('reverse', self.reverse_var.get()))
+        reverse_cb.pack(anchor='w', padx=5)
+
+        self.mono_var = tk.BooleanVar(value=False)
+        mono_cb = tk.Checkbutton(toggle_frame, text="Mono (Single Channel)", variable=self.mono_var,
+                                  command=lambda: self.update_param('mono', self.mono_var.get()))
+        mono_cb.pack(anchor='w', padx=5)
+
+        self.telephone_var = tk.BooleanVar(value=False)
+        telephone_cb = tk.Checkbutton(toggle_frame, text="Telephone Effect", variable=self.telephone_var,
+                                       command=lambda: self.update_param('telephone', self.telephone_var.get()))
+        telephone_cb.pack(anchor='w', padx=5)
+
+        # Reset button
+        reset_btn = tk.Button(scrollable_frame, text="Reset All to Default", command=self.reset_effects,
+                              bg="#ff9800", fg="white", font=("Arial", 10, "bold"))
+        reset_btn.pack(pady=10)
+
+        self.running = True
+        self.update_status()
+
+    def create_slider(self, parent, param_key, label, min_val, max_val, default, resolution):
+        """Create a labeled slider for an audio parameter."""
+        frame = tk.Frame(parent)
+        frame.pack(fill=tk.X, padx=5, pady=2)
+
+        lbl = tk.Label(frame, text=label, width=15, anchor='w')
+        lbl.pack(side=tk.LEFT)
+
+        if isinstance(default, float):
+            var = tk.DoubleVar(value=self.audio_params.get(param_key, default))
+        else:
+            var = tk.IntVar(value=self.audio_params.get(param_key, default))
+
+        self.slider_vars[param_key] = var
+
+        slider = tk.Scale(frame, from_=min_val, to=max_val, orient=tk.HORIZONTAL,
+                         variable=var, resolution=resolution, length=250,
+                         command=lambda v, k=param_key: self.update_param(k, v))
+        slider.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+    def update_param(self, key, value):
+        """Update an audio parameter."""
+        if key in ('reverse', 'mono', 'telephone'):
+            self.audio_params[key] = bool(value)
+        elif isinstance(value, str):
+            try:
+                self.audio_params[key] = float(value) if '.' in value else int(value)
+            except:
+                self.audio_params[key] = float(value)
+        else:
+            self.audio_params[key] = value
+
+    def apply_preset(self, preset_name):
+        """Apply a preset to all audio parameters."""
+        if preset_name in self.presets:
+            preset = self.presets[preset_name]
+            for key, value in preset.items():
+                self.audio_params[key] = value
+                if key in self.slider_vars:
+                    self.slider_vars[key].set(value)
+                elif key == 'reverse' and hasattr(self, 'reverse_var'):
+                    self.reverse_var.set(value)
+                elif key == 'mono' and hasattr(self, 'mono_var'):
+                    self.mono_var.set(value)
+                elif key == 'telephone' and hasattr(self, 'telephone_var'):
+                    self.telephone_var.set(value)
+            print(f"Applied preset: {preset_name}")
+            self.status_label.config(text=f"Preset applied: {preset_name}")
+
+    def reset_effects(self):
+        """Reset all effects to default."""
+        self.apply_preset('Normal')
+
+    def build_ffmpeg_filter(self):
+        """Build the ffmpeg audio filter chain."""
+        filters = []
+
+        # Speed/tempo (atempo only works 0.5-2.0, chain for more extreme values)
+        speed = self.audio_params['speed']
+        if speed != 1.0:
+            # atempo works between 0.5 and 2.0
+            temp_speed = speed
+            while temp_speed < 0.5:
+                filters.append("atempo=0.5")
+                temp_speed *= 2
+            while temp_speed > 2.0:
+                filters.append("atempo=2.0")
+                temp_speed /= 2
+            if temp_speed != 1.0:
+                filters.append(f"atempo={temp_speed}")
+
+        # Pitch (using asetrate+aresample)
+        pitch = self.audio_params['pitch']
+        if pitch != 1.0:
+            new_rate = int(44100 * pitch)
+            filters.append(f"asetrate={new_rate},aresample=44100")
+
+        # Bass boost/cut
+        bass = self.audio_params['bass']
+        if bass != 0:
+            filters.append(f"bass=g={bass}")
+
+        # Treble boost/cut
+        treble = self.audio_params['treble']
+        if treble != 0:
+            filters.append(f"treble=g={treble}")
+
+        # Echo
+        echo_delay = self.audio_params['echo_delay']
+        echo_decay = self.audio_params['echo_decay']
+        if echo_delay > 0 and echo_decay > 0:
+            filters.append(f"aecho=0.8:0.88:{echo_delay}:{echo_decay}")
+
+        # Reverb (using aecho to simulate)
+        reverb = self.audio_params['reverb']
+        if reverb > 0:
+            reverb_delay = 40 + reverb
+            reverb_decay = 0.3 + (reverb / 200)
+            filters.append(f"aecho=0.8:0.9:{reverb_delay}|{reverb_delay*1.5}:{reverb_decay}|{reverb_decay*0.7}")
+
+        # Flanger
+        flanger_delay = self.audio_params.get('flanger_delay', 0)
+        flanger_depth = self.audio_params.get('flanger_depth', 0)
+        if flanger_delay > 0 and flanger_depth > 0:
+            filters.append(f"flanger=delay={flanger_delay}:depth={flanger_depth}:speed=0.5")
+
+        # Tremolo
+        tremolo_freq = self.audio_params.get('tremolo_freq', 0)
+        tremolo_depth = self.audio_params.get('tremolo_depth', 0)
+        if tremolo_freq > 0 and tremolo_depth > 0:
+            filters.append(f"tremolo=f={tremolo_freq}:d={tremolo_depth}")
+
+        # Vibrato
+        vibrato_freq = self.audio_params.get('vibrato_freq', 0)
+        vibrato_depth = self.audio_params.get('vibrato_depth', 0)
+        if vibrato_freq > 0 and vibrato_depth > 0:
+            filters.append(f"vibrato=f={vibrato_freq}:d={vibrato_depth}")
+
+        # Phaser
+        phaser_speed = self.audio_params.get('phaser_speed', 0)
+        if phaser_speed > 0:
+            filters.append(f"aphaser=speed={phaser_speed}")
+
+        # Chorus
+        chorus_depth = self.audio_params.get('chorus_depth', 0)
+        if chorus_depth > 0:
+            filters.append(f"chorus=0.5:0.9:{chorus_depth}:0.4:0.25:2")
+
+        # Distortion (using acrusher)
+        distortion = self.audio_params['distortion']
+        if distortion > 0:
+            crush_bits = max(2, 16 - int(distortion / 10))
+            filters.append(f"acrusher=bits={crush_bits}:mix={distortion/100}")
+
+        # Telephone effect (bandpass simulation)
+        if self.audio_params.get('telephone', False):
+            filters.append("highpass=f=400,lowpass=f=3400")
+
+        # Lowpass filter
+        lowpass = self.audio_params['lowpass']
+        if lowpass < 20000 and not self.audio_params.get('telephone', False):
+            filters.append(f"lowpass=f={lowpass}")
+
+        # Highpass filter
+        highpass = self.audio_params['highpass']
+        if highpass > 20 and not self.audio_params.get('telephone', False):
+            filters.append(f"highpass=f={highpass}")
+
+        # Bitcrush
+        bitcrush = self.audio_params['bitcrush']
+        if bitcrush < 16:
+            filters.append(f"acrusher=bits={bitcrush}:mode=log")
+
+        # Add noise/static
+        noise_amount = self.audio_params.get('noise_amount', 0)
+        if noise_amount > 0:
+            noise_vol = noise_amount / 500  # Scale noise volume
+            # Use anoisesrc mixed with original
+            # We'll use a workaround: add slight white noise via highpass of noise
+            filters.append(f"highpass=f=15000,volume={noise_vol},aecho=1:1:1:0.1")
+
+        # Mono
+        if self.audio_params.get('mono', False):
+            filters.append("pan=mono|c0=0.5*c0+0.5*c1")
+
+        # Volume
+        volume = self.audio_params['volume']
+        if volume != 1.0:
+            filters.append(f"volume={volume}")
+
+        # Reverse (should be last for proper effect)
+        if self.audio_params['reverse']:
+            filters.append("areverse")
+
+        return ",".join(filters) if filters else "anull"
+
+    def apply_audio_effects(self, output_path):
+        """Apply current audio effects and save to output path."""
+        if not self.original_audio_path or not os.path.exists(self.original_audio_path):
+            print("No audio to process")
+            return False
+
+        ffmpeg_path = shutil.which("ffmpeg")
+        if not ffmpeg_path:
+            print("FFmpeg not found")
+            return False
+
+        filter_chain = self.build_ffmpeg_filter()
+        print(f"Applying audio filter: {filter_chain}")
+
+        try:
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", self.original_audio_path,
+                "-af", filter_chain,
+                "-ar", "44100",
+                "-ac", "2",
+                output_path
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode == 0:
+                print(f"Audio effects applied: {output_path}")
+                return True
+            else:
+                print(f"FFmpeg error: {result.stderr}")
+                return False
+        except Exception as e:
+            print(f"Error applying effects: {e}")
+            return False
+
+    def preview_effects(self):
+        """Apply effects and preview the result."""
+        if self.is_extracting:
+            self.status_label.config(text="Still extracting audio...")
+            return
+
+        if not self.original_audio_path:
+            self.status_label.config(text="No audio available")
+            return
+
+        if self.is_processing:
+            self.status_label.config(text="Already processing...")
+            return
+
+        self.is_processing = True
+        self.status_label.config(text="Applying effects...")
+        self.root.update()
+
+        # CRITICAL: Stop any playing audio and unload it first to release the file lock
+        self.stop_audio()
+        if PYGAME_AVAILABLE:
+            try:
+                pygame.mixer.music.unload()
+            except:
+                pass
+            # Small delay to ensure file is released
+            time.sleep(0.1)
+
+        # Use unique filename for each preview to avoid file locking issues
+        self.preview_counter += 1
+        new_preview_path = os.path.join(self.temp_dir, f"preview_audio_{self.preview_counter}.wav")
+
+        # Process synchronously to avoid threading issues with tkinter
+        success = self.apply_audio_effects(new_preview_path)
+
+        if success:
+            # Clean up old preview file if different
+            old_preview = self.preview_audio_path
+            self.preview_audio_path = new_preview_path
+            if old_preview and old_preview != self.original_audio_path and old_preview != new_preview_path:
+                try:
+                    os.remove(old_preview)
+                except:
+                    pass
+
+            self.status_label.config(text="Effects applied!")
+            self.is_processing = False
+            # Auto-play
+            self.play_audio()
+        else:
+            self.status_label.config(text="Failed to apply effects")
+            self.preview_audio_path = self.original_audio_path
+            self.is_processing = False
+
+    def play_audio(self):
+        """Play the current preview audio."""
+        if self.is_extracting:
+            self.status_label.config(text="Still extracting audio...")
+            return
+
+        if not PYGAME_AVAILABLE:
+            self.status_label.config(text="pygame not installed - cannot play")
+            return
+
+        audio_path = self.preview_audio_path or self.original_audio_path
+
+        if not audio_path or not os.path.exists(audio_path):
+            self.status_label.config(text="No audio to play")
+            return
+
+        try:
+            self.stop_audio()
+            if PYGAME_AVAILABLE:
+                try:
+                    pygame.mixer.music.unload()
+                except:
+                    pass
+            pygame.mixer.music.load(audio_path)
+            pygame.mixer.music.play()
+            self.is_playing = True
+            self.status_label.config(text="Playing...")
+        except Exception as e:
+            print(f"Playback error: {e}")
+            self.status_label.config(text=f"Playback error: {e}")
+
+    def stop_audio(self):
+        """Stop audio playback and release file lock."""
+        if PYGAME_AVAILABLE:
+            try:
+                pygame.mixer.music.stop()
+                pygame.mixer.music.unload()
+                self.is_playing = False
+                self.status_label.config(text="Stopped")
+            except:
+                pass
+
+    def keep_audio(self):
+        """Keep the current effects for final render."""
+        # Stop audio first to release any file locks
+        self.stop_audio()
+
+        if not self.preview_audio_path or not os.path.exists(self.preview_audio_path) or self.preview_audio_path == self.original_audio_path:
+            # If no preview with effects, apply effects first
+            self.processed_audio_path = os.path.join(self.temp_dir, "kept_audio.wav")
+            if self.apply_audio_effects(self.processed_audio_path):
+                self.keep_status.config(text="Using: Processed Audio (Effects Applied)")
+                print("Audio effects kept for final render")
+            else:
+                self.keep_status.config(text="Using: Original Audio (Effect failed)")
+                self.processed_audio_path = None
+        else:
+            # Copy preview to kept
+            self.processed_audio_path = os.path.join(self.temp_dir, "kept_audio.wav")
+            try:
+                shutil.copy(self.preview_audio_path, self.processed_audio_path)
+                self.keep_status.config(text="Using: Processed Audio (Effects Applied)")
+                print("Audio effects kept for final render")
+            except Exception as e:
+                print(f"Error keeping audio: {e}")
+                self.keep_status.config(text="Using: Original Audio (Copy failed)")
+                self.processed_audio_path = None
+
+    def get_audio_for_render(self):
+        """Get the audio path to use for final render."""
+        if self.processed_audio_path and os.path.exists(self.processed_audio_path):
+            return self.processed_audio_path
+        return None  # Use original from video
+
+    def update_status(self):
+        """Update the status label based on current state."""
+        if self.is_extracting:
+            self.status_label.config(text="Extracting audio from video...")
+        elif self.original_audio_path and os.path.exists(self.original_audio_path):
+            self.status_label.config(text="Audio ready - click Play or Preview Effects")
+        else:
+            self.status_label.config(text="No audio loaded")
+
+    def update(self):
+        """Update the panel (call from main loop)."""
+        if self.root and self.running:
+            try:
+                if self.is_extracting:
+                    self.status_label.config(text="Extracting audio...")
+                elif self.original_audio_path and os.path.exists(self.original_audio_path):
+                    if not self.is_playing and "Extracting" in self.status_label.cget("text"):
+                        self.status_label.config(text="Audio ready")
+                self.root.update_idletasks()
+                self.root.update()
+            except tk.TclError:
+                self.running = False
+
+    def close(self):
+        """Close the panel and cleanup."""
+        self.stop_audio()
+        if self.root:
+            self.running = False
+            try:
+                self.root.destroy()
+            except:
+                pass
+        # Cleanup temp files
+        try:
+            shutil.rmtree(self.temp_dir, ignore_errors=True)
+        except:
+            pass
+
+
 def reset_all_effects():
     """Reset all effect flags to their default (off) state."""
     global alternate_sort_direction, current_mirror_mode, current_color_swap_mode
@@ -762,6 +1499,15 @@ control_panel = EffectControlPanel(effect_states, effect_params)
 control_panel.create_panel()
 
 # ----------------------------
+# Initialize Audio Effects Panel (only for video files)
+# ----------------------------
+audio_panel = None
+if is_video_file:
+    audio_panel = AudioEffectsPanel(source_path)
+    audio_panel.set_video_source(source_path)  # ← ADD THIS LINE
+    audio_panel.create_panel()
+
+# ----------------------------
 # Rendering State
 # ----------------------------
 is_rendering = False
@@ -868,26 +1614,49 @@ def render_video():
     render_cap.release()
     out_writer.release()
 
-    # Now merge audio from original video using ffmpeg
+    # Now merge audio using ffmpeg
     control_panel.update_render_progress(95, "Adding audio...")
-    print("Adding audio from original video...")
+
+    # Check if we have processed audio from the audio panel
+    processed_audio = None
+    if audio_panel:
+        processed_audio = audio_panel.get_audio_for_render()
+
+    if processed_audio:
+        print(f"Using processed audio: {processed_audio}")
+    else:
+        print("Using original audio from video...")
 
     # Check if ffmpeg is available
     ffmpeg_path = shutil.which("ffmpeg")
     if ffmpeg_path:
         try:
-            # Use ffmpeg to combine video with original audio
-            ffmpeg_cmd = [
-                "ffmpeg", "-y",
-                "-i", temp_video_path,      # Input: rendered video (no audio)
-                "-i", source_path,           # Input: original video (for audio)
-                "-c:v", "copy",              # Copy video stream as-is
-                "-c:a", "aac",               # Encode audio as AAC
-                "-map", "0:v:0",             # Use video from first input
-                "-map", "1:a:0?",            # Use audio from second input (if exists)
-                "-shortest",                 # Match shortest stream
-                output_path
-            ]
+            if processed_audio and os.path.exists(processed_audio):
+                # Use processed audio from audio panel
+                ffmpeg_cmd = [
+                    "ffmpeg", "-y",
+                    "-i", temp_video_path,      # Input: rendered video (no audio)
+                    "-i", processed_audio,       # Input: processed audio file
+                    "-c:v", "copy",              # Copy video stream as-is
+                    "-c:a", "aac",               # Encode audio as AAC
+                    "-map", "0:v:0",             # Use video from first input
+                    "-map", "1:a:0",             # Use audio from second input
+                    "-shortest",                 # Match shortest stream
+                    output_path
+                ]
+            else:
+                # Use original audio from video
+                ffmpeg_cmd = [
+                    "ffmpeg", "-y",
+                    "-i", temp_video_path,      # Input: rendered video (no audio)
+                    "-i", source_path,           # Input: original video (for audio)
+                    "-c:v", "copy",              # Copy video stream as-is
+                    "-c:a", "aac",               # Encode audio as AAC
+                    "-map", "0:v:0",             # Use video from first input
+                    "-map", "1:a:0?",            # Use audio from second input (if exists)
+                    "-shortest",                 # Match shortest stream
+                    output_path
+                ]
 
             result = subprocess.run(ffmpeg_cmd, capture_output=True, text=True)
 
@@ -940,15 +1709,7 @@ transition_duration_seconds = 1.0
 transition_from_preset = 0
 transition_to_preset = 0
 
-# ----------------------------
-# Effect Strength Knobs (legacy - now uses effect_params)
-# ----------------------------
-effect_strength_values = [
-    effect_params['rgb_wave_intensity'],
-    effect_params['posterize_levels'],
-    effect_params['motion_smear_amount'],
-    effect_params['feedback_decay_rate']
-]
+
 
 # ----------------------------
 # Main Loop
@@ -1498,12 +2259,12 @@ while True:
         effect_states['digital_rain_enabled'] = not effect_states['digital_rain_enabled']
         if not effect_states['digital_rain_enabled']:
             digital_rain_drops_state = None
+    # Audio Panel Hotkeys
+    if was_key_just_pressed("+"):
+        audio_panel.preview_effects()
+    if was_key_just_pressed("-"):
+        audio_panel.stop_audio()
 
-    # Effect strength adjustment
-    if keyboard.is_pressed("+"):
-        effect_strength_values = change_knob("up", effect_strength_values)
-    if keyboard.is_pressed("-"):
-        effect_strength_values = change_knob("down", effect_strength_values)
 
     # Video file playback controls
     if is_video_file:
@@ -1538,6 +2299,10 @@ while True:
     # Update control panel GUI
     control_panel.update()
 
+    # Update audio panel GUI (if exists)
+    if audio_panel:
+        audio_panel.update()
+
     # Quit application
     wait_time = frame_delay if is_video_file else 1
     if cv2.waitKey(wait_time) & 0xFF == ord("q"):
@@ -1549,5 +2314,7 @@ while True:
 # Cleanup
 # ----------------------------
 control_panel.close()
+if audio_panel:
+    audio_panel.close()
 camera.release()
 cv2.destroyAllWindows()
