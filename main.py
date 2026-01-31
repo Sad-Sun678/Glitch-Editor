@@ -10,6 +10,7 @@ import subprocess
 import os
 import shutil
 from effects import change_knob
+print("ffmpeg path:", shutil.which("ffmpeg"))
 
 # Track key states to detect single taps vs held keys
 keyboard_state = {}
