@@ -4,13 +4,21 @@ import keyboard
 import effects
 import time
 import tkinter as tk
-from tkinter import filedialog, ttk
+from tkinter import filedialog, ttk, simpledialog
 import threading
 import subprocess
 import os
 import shutil
 import tempfile
-from effects import change_knob
+import json
+
+# Preset file paths
+PRESETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "presets")
+VIDEO_PRESETS_FILE = os.path.join(PRESETS_DIR, "video_presets.json")
+AUDIO_PRESETS_FILE = os.path.join(PRESETS_DIR, "audio_presets.json")
+
+# Create presets directory if it doesn't exist
+os.makedirs(PRESETS_DIR, exist_ok=True)
 
 # Try to import pygame for audio playback
 try:
@@ -62,6 +70,7 @@ effect_params = {
     'prism_offset': 8,
     'spiral_warp_strength': 0.5,
     'digital_rain_drops': 200,
+    'rotation_speed': 0.5,  # Degrees per frame
 }
 
 
@@ -204,7 +213,99 @@ class EffectControlPanel:
             ('digital_rain', 'Digital Rain', 'PgDn', 'digital_rain_drops', 50, 500, 200),
             ('pixel_sort', 'Pixel Sort', 'P', None, None, None),
             ('background_effect', 'Background Scanlines', '*', None, None, None),
+            ('rotation', 'Rotation', 'Q', 'rotation_speed', 0.1, 5.0, 0.5),
         ]
+
+        # Load saved custom presets
+        self.custom_presets = self.load_custom_presets()
+
+    def load_custom_presets(self):
+        """Load custom presets from JSON file."""
+        try:
+            if os.path.exists(VIDEO_PRESETS_FILE):
+                with open(VIDEO_PRESETS_FILE, 'r') as f:
+                    return json.load(f)
+        except Exception as e:
+            print(f"Error loading video presets: {e}")
+        return {}
+
+    def save_custom_presets(self):
+        """Save custom presets to JSON file."""
+        try:
+            with open(VIDEO_PRESETS_FILE, 'w') as f:
+                json.dump(self.custom_presets, f, indent=2)
+            print(f"Video presets saved to {VIDEO_PRESETS_FILE}")
+        except Exception as e:
+            print(f"Error saving video presets: {e}")
+
+    def save_current_as_preset(self):
+        """Save current effect settings as a named preset."""
+        name = simpledialog.askstring("Save Preset", "Enter preset name:",
+                                       parent=self.root)
+        if not name:
+            return
+
+        # Collect current state
+        preset_data = {
+            'effect_states': dict(self.effect_states),
+            'effect_params': dict(self.effect_params)
+        }
+        self.custom_presets[name] = preset_data
+        self.save_custom_presets()
+        self.update_preset_dropdown()
+        print(f"Saved video preset: {name}")
+
+    def load_preset(self, preset_name):
+        """Load a preset by name."""
+        if preset_name not in self.custom_presets:
+            return
+
+        preset_data = self.custom_presets[preset_name]
+
+        # Apply effect states
+        if 'effect_states' in preset_data:
+            for key, value in preset_data['effect_states'].items():
+                if key in self.effect_states:
+                    self.effect_states[key] = value
+
+        # Apply effect params
+        if 'effect_params' in preset_data:
+            for key, value in preset_data['effect_params'].items():
+                if key in self.effect_params:
+                    self.effect_params[key] = value
+                    if key in self.slider_vars:
+                        self.slider_vars[key].set(value)
+
+        # Sync checkboxes
+        self.sync_from_keyboard()
+        print(f"Loaded video preset: {preset_name}")
+
+    def delete_preset(self):
+        """Delete the currently selected preset."""
+        if hasattr(self, 'preset_var') and self.preset_var.get():
+            name = self.preset_var.get()
+            if name in self.custom_presets:
+                del self.custom_presets[name]
+                self.save_custom_presets()
+                self.update_preset_dropdown()
+                print(f"Deleted video preset: {name}")
+
+    def update_preset_dropdown(self):
+        """Update the preset dropdown menu."""
+        if hasattr(self, 'preset_dropdown'):
+            menu = self.preset_dropdown['menu']
+            menu.delete(0, 'end')
+            for name in self.custom_presets.keys():
+                menu.add_command(label=name, command=lambda n=name: self.on_preset_selected(n))
+            if self.custom_presets:
+                self.preset_var.set(list(self.custom_presets.keys())[0])
+            else:
+                self.preset_var.set('')
+
+    def on_preset_selected(self, name):
+        """Handle preset selection from dropdown."""
+        self.preset_var.set(name)
+        self.load_preset(name)
 
     def create_panel(self):
         """Create the control panel window."""
@@ -283,11 +384,71 @@ class EffectControlPanel:
         )
         preview_checkbox.pack(anchor='w')
 
+        # Preview scale slider for performance
+        scale_frame = tk.Frame(preview_frame)
+        scale_frame.pack(fill=tk.X, pady=5)
+
+        scale_label = tk.Label(scale_frame, text="Preview Size:", font=("Arial", 9))
+        scale_label.pack(side=tk.LEFT)
+
+        self.preview_scale_var = tk.DoubleVar(value=1.0)
+        self.preview_scale_slider = tk.Scale(
+            scale_frame,
+            from_=0.25,
+            to=1.0,
+            orient=tk.HORIZONTAL,
+            variable=self.preview_scale_var,
+            resolution=0.05,
+            length=200,
+            font=("Arial", 8)
+        )
+        self.preview_scale_slider.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        scale_hint = tk.Label(scale_frame, text="(smaller = faster)", font=("Arial", 8), fg="gray")
+        scale_hint.pack(side=tk.LEFT, padx=5)
+
         # Hint label
         hint_label = tk.Label(preview_frame,
                               text="Tip: Press 'Space' to pause video, '`' to toggle live effects",
                               font=("Arial", 8), fg="gray")
         hint_label.pack(anchor='w')
+
+        # Separator
+        ttk.Separator(scrollable_frame, orient='horizontal').pack(fill=tk.X, pady=10, padx=10)
+
+        # Custom Presets Section
+        preset_frame = tk.LabelFrame(scrollable_frame, text="Custom Presets", font=("Arial", 10, "bold"))
+        preset_frame.pack(pady=5, padx=10, fill=tk.X)
+
+        # Save preset button
+        save_preset_btn = tk.Button(preset_frame, text="💾 Save Current as Preset",
+                                     command=self.save_current_as_preset,
+                                     bg="#2196F3", fg="white")
+        save_preset_btn.pack(fill=tk.X, padx=5, pady=2)
+
+        # Preset dropdown and load
+        preset_select_frame = tk.Frame(preset_frame)
+        preset_select_frame.pack(fill=tk.X, padx=5, pady=2)
+
+        self.preset_var = tk.StringVar()
+        preset_names = list(self.custom_presets.keys()) if self.custom_presets else ['']
+        self.preset_dropdown = tk.OptionMenu(preset_select_frame, self.preset_var,
+                                              *preset_names if preset_names else [''])
+        self.preset_dropdown.config(width=20)
+        self.preset_dropdown.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        load_preset_btn = tk.Button(preset_select_frame, text="Load",
+                                     command=lambda: self.load_preset(self.preset_var.get()),
+                                     bg="#4CAF50", fg="white", width=6)
+        load_preset_btn.pack(side=tk.LEFT, padx=2)
+
+        delete_preset_btn = tk.Button(preset_select_frame, text="Delete",
+                                       command=self.delete_preset,
+                                       bg="#f44336", fg="white", width=6)
+        delete_preset_btn.pack(side=tk.LEFT, padx=2)
+
+        if self.custom_presets:
+            self.preset_var.set(list(self.custom_presets.keys())[0])
 
         # Separator
         ttk.Separator(scrollable_frame, orient='horizontal').pack(fill=tk.X, pady=10, padx=10)
@@ -432,6 +593,7 @@ class AudioEffectsPanel:
         self.running = False
         self.temp_dir = tempfile.mkdtemp()
         self.original_audio_path = None
+        self.video_original_audio_path = None  # Backup of video's original audio
         self.preview_audio_path = None
         self.processed_audio_path = None  # The "kept" audio for final render
         self.is_playing = False
@@ -439,6 +601,8 @@ class AudioEffectsPanel:
         self.is_processing = False
         self.preview_counter = 0  # For unique preview filenames
         self.pending_status = None  # For thread-safe status updates
+        self.custom_audio_loaded = False  # Track if custom audio is loaded
+        self.custom_audio_source = None  # Original path of custom audio file
 
         # Audio effect parameters
         self.audio_params = {
@@ -562,6 +726,90 @@ class AudioEffectsPanel:
                       'noise_amount': 0, 'telephone': False, 'mono': False},
         }
 
+        # Load custom audio presets
+        self.custom_presets = self.load_custom_presets()
+
+    def load_custom_presets(self):
+        """Load custom audio presets from JSON file."""
+        try:
+            if os.path.exists(AUDIO_PRESETS_FILE):
+                with open(AUDIO_PRESETS_FILE, 'r') as f:
+                    return json.load(f)
+        except Exception as e:
+            print(f"Error loading audio presets: {e}")
+        return {}
+
+    def save_custom_presets(self):
+        """Save custom audio presets to JSON file."""
+        try:
+            with open(AUDIO_PRESETS_FILE, 'w') as f:
+                json.dump(self.custom_presets, f, indent=2)
+            print(f"Audio presets saved to {AUDIO_PRESETS_FILE}")
+        except Exception as e:
+            print(f"Error saving audio presets: {e}")
+
+    def save_current_as_preset(self):
+        """Save current audio settings as a named preset."""
+        name = simpledialog.askstring("Save Audio Preset", "Enter preset name:",
+                                       parent=self.root)
+        if not name:
+            return
+
+        # Collect current state
+        self.custom_presets[name] = dict(self.audio_params)
+        self.save_custom_presets()
+        self.update_custom_preset_dropdown()
+        self.status_label.config(text=f"Saved preset: {name}")
+        print(f"Saved audio preset: {name}")
+
+    def load_custom_preset(self, preset_name):
+        """Load a custom preset by name."""
+        if preset_name not in self.custom_presets:
+            return
+
+        preset_data = self.custom_presets[preset_name]
+        for key, value in preset_data.items():
+            self.audio_params[key] = value
+            if key in self.slider_vars:
+                self.slider_vars[key].set(value)
+            elif key == 'reverse' and hasattr(self, 'reverse_var'):
+                self.reverse_var.set(value)
+            elif key == 'mono' and hasattr(self, 'mono_var'):
+                self.mono_var.set(value)
+            elif key == 'telephone' and hasattr(self, 'telephone_var'):
+                self.telephone_var.set(value)
+
+        self.status_label.config(text=f"Loaded preset: {preset_name}")
+        print(f"Loaded audio preset: {preset_name}")
+
+    def delete_custom_preset(self):
+        """Delete the currently selected custom preset."""
+        if hasattr(self, 'custom_preset_var') and self.custom_preset_var.get():
+            name = self.custom_preset_var.get()
+            if name in self.custom_presets:
+                del self.custom_presets[name]
+                self.save_custom_presets()
+                self.update_custom_preset_dropdown()
+                self.status_label.config(text=f"Deleted preset: {name}")
+                print(f"Deleted audio preset: {name}")
+
+    def update_custom_preset_dropdown(self):
+        """Update the custom preset dropdown menu."""
+        if hasattr(self, 'custom_preset_dropdown'):
+            menu = self.custom_preset_dropdown['menu']
+            menu.delete(0, 'end')
+            for name in self.custom_presets.keys():
+                menu.add_command(label=name, command=lambda n=name: self.on_custom_preset_selected(n))
+            if self.custom_presets:
+                self.custom_preset_var.set(list(self.custom_presets.keys())[0])
+            else:
+                self.custom_preset_var.set('')
+
+    def on_custom_preset_selected(self, name):
+        """Handle custom preset selection from dropdown."""
+        self.custom_preset_var.set(name)
+        self.load_custom_preset(name)
+
     def set_video_source(self, path):
         """Set the video source and extract audio."""
         self.video_source_path = path
@@ -580,6 +828,7 @@ class AudioEffectsPanel:
 
         self.is_extracting = True
         self.original_audio_path = os.path.join(self.temp_dir, "original_audio.wav")
+        self.video_original_audio_path = os.path.join(self.temp_dir, "video_original_audio.wav")
 
         def extract_thread():
             try:
@@ -596,6 +845,8 @@ class AudioEffectsPanel:
                 if result.returncode == 0:
                     print(f"Audio extracted to: {self.original_audio_path}")
                     self.preview_audio_path = self.original_audio_path
+                    # Make a backup copy of the video's original audio
+                    shutil.copy(self.original_audio_path, self.video_original_audio_path)
                 else:
                     print(f"Failed to extract audio: {result.stderr}")
                     self.original_audio_path = None
@@ -607,6 +858,94 @@ class AudioEffectsPanel:
 
         thread = threading.Thread(target=extract_thread, daemon=True)
         thread.start()
+
+    def load_custom_audio(self):
+        """Load a custom audio file (MP3 or WAV) to replace the video's audio."""
+        if self.is_extracting or self.is_processing:
+            self.status_label.config(text="Please wait for current operation...")
+            return
+
+        # Open file dialog
+        file_path = filedialog.askopenfilename(
+            title="Select Audio File",
+            filetypes=[
+                ("Audio Files", "*.mp3 *.wav *.ogg *.flac *.aac *.m4a"),
+                ("MP3 Files", "*.mp3"),
+                ("WAV Files", "*.wav"),
+                ("All Files", "*.*")
+            ]
+        )
+
+        if not file_path:
+            return
+
+        self.status_label.config(text="Loading custom audio...")
+        self.root.update()
+
+        # Stop any playing audio
+        self.stop_audio()
+
+        ffmpeg_path = shutil.which("ffmpeg")
+        if not ffmpeg_path:
+            self.status_label.config(text="FFmpeg not found!")
+            return
+
+        # Convert to WAV format for consistent processing
+        new_audio_path = os.path.join(self.temp_dir, "custom_audio.wav")
+
+        try:
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", file_path,
+                "-acodec", "pcm_s16le",
+                "-ar", "44100",
+                "-ac", "2",
+                new_audio_path
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+
+            if result.returncode == 0:
+                self.original_audio_path = new_audio_path
+                self.preview_audio_path = new_audio_path
+                self.custom_audio_loaded = True
+                self.custom_audio_source = file_path
+                self.processed_audio_path = None  # Reset kept audio
+
+                # Update UI
+                filename = os.path.basename(file_path)
+                self.audio_source_label.config(text=f"Source: {filename}")
+                self.keep_status.config(text="Using: Custom Audio (not yet kept)")
+                self.status_label.config(text=f"Loaded: {filename}")
+                print(f"Custom audio loaded: {file_path}")
+            else:
+                self.status_label.config(text="Failed to load audio file")
+                print(f"FFmpeg error: {result.stderr}")
+
+        except Exception as e:
+            self.status_label.config(text=f"Error: {e}")
+            print(f"Error loading custom audio: {e}")
+
+    def restore_original_audio(self):
+        """Restore the video's original audio."""
+        if not self.video_original_audio_path or not os.path.exists(self.video_original_audio_path):
+            self.status_label.config(text="Original audio not available")
+            return
+
+        self.stop_audio()
+
+        # Restore from backup
+        self.original_audio_path = os.path.join(self.temp_dir, "original_audio.wav")
+        shutil.copy(self.video_original_audio_path, self.original_audio_path)
+        self.preview_audio_path = self.original_audio_path
+        self.custom_audio_loaded = False
+        self.custom_audio_source = None
+        self.processed_audio_path = None  # Reset kept audio
+
+        # Update UI
+        self.audio_source_label.config(text="Source: Video's Original Audio")
+        self.keep_status.config(text="Using: Original Audio")
+        self.status_label.config(text="Restored original audio")
+        print("Restored video's original audio")
 
     def create_panel(self):
         """Create the audio effects panel window."""
@@ -677,6 +1016,30 @@ class AudioEffectsPanel:
         # Separator
         ttk.Separator(scrollable_frame, orient='horizontal').pack(fill=tk.X, pady=10, padx=10)
 
+        # Audio Source Section
+        source_frame = tk.LabelFrame(scrollable_frame, text="Audio Source", font=("Arial", 10, "bold"))
+        source_frame.pack(pady=5, padx=10, fill=tk.X)
+
+        self.audio_source_label = tk.Label(source_frame, text="Source: Video's Original Audio",
+                                            font=("Arial", 8), fg="gray", wraplength=380)
+        self.audio_source_label.pack(pady=2)
+
+        source_btn_frame = tk.Frame(source_frame)
+        source_btn_frame.pack(fill=tk.X, pady=5)
+
+        self.load_audio_btn = tk.Button(source_btn_frame, text="📁 Load Custom Audio",
+                                         command=self.load_custom_audio,
+                                         bg="#FF9800", fg="white", width=18)
+        self.load_audio_btn.pack(side=tk.LEFT, padx=5)
+
+        self.restore_original_btn = tk.Button(source_btn_frame, text="↩ Restore Original",
+                                               command=self.restore_original_audio,
+                                               bg="#607D8B", fg="white", width=15)
+        self.restore_original_btn.pack(side=tk.LEFT, padx=5)
+
+        # Separator
+        ttk.Separator(scrollable_frame, orient='horizontal').pack(fill=tk.X, pady=10, padx=10)
+
         # Presets section
         preset_frame = tk.LabelFrame(scrollable_frame, text="Presets", font=("Arial", 10, "bold"))
         preset_frame.pack(pady=5, padx=10, fill=tk.X)
@@ -695,6 +1058,43 @@ class AudioEffectsPanel:
             if col >= 3:
                 col = 0
                 row += 1
+
+        # Separator
+        ttk.Separator(scrollable_frame, orient='horizontal').pack(fill=tk.X, pady=10, padx=10)
+
+        # Custom Presets Section
+        custom_preset_frame = tk.LabelFrame(scrollable_frame, text="Custom Presets", font=("Arial", 10, "bold"))
+        custom_preset_frame.pack(pady=5, padx=10, fill=tk.X)
+
+        # Save preset button
+        save_preset_btn = tk.Button(custom_preset_frame, text="💾 Save Current as Preset",
+                                     command=self.save_current_as_preset,
+                                     bg="#2196F3", fg="white")
+        save_preset_btn.pack(fill=tk.X, padx=5, pady=2)
+
+        # Custom preset dropdown and load
+        custom_preset_select_frame = tk.Frame(custom_preset_frame)
+        custom_preset_select_frame.pack(fill=tk.X, padx=5, pady=2)
+
+        self.custom_preset_var = tk.StringVar()
+        custom_preset_names = list(self.custom_presets.keys()) if self.custom_presets else ['']
+        self.custom_preset_dropdown = tk.OptionMenu(custom_preset_select_frame, self.custom_preset_var,
+                                                     *custom_preset_names if custom_preset_names else [''])
+        self.custom_preset_dropdown.config(width=20)
+        self.custom_preset_dropdown.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        load_custom_btn = tk.Button(custom_preset_select_frame, text="Load",
+                                     command=lambda: self.load_custom_preset(self.custom_preset_var.get()),
+                                     bg="#4CAF50", fg="white", width=6)
+        load_custom_btn.pack(side=tk.LEFT, padx=2)
+
+        delete_custom_btn = tk.Button(custom_preset_select_frame, text="Delete",
+                                       command=self.delete_custom_preset,
+                                       bg="#f44336", fg="white", width=6)
+        delete_custom_btn.pack(side=tk.LEFT, padx=2)
+
+        if self.custom_presets:
+            self.custom_preset_var.set(list(self.custom_presets.keys())[0])
 
         # Separator
         ttk.Separator(scrollable_frame, orient='horizontal').pack(fill=tk.X, pady=10, padx=10)
@@ -925,13 +1325,8 @@ class AudioEffectsPanel:
         if bitcrush < 16:
             filters.append(f"acrusher=bits={bitcrush}:mode=log")
 
-        # Add noise/static
-        noise_amount = self.audio_params.get('noise_amount', 0)
-        if noise_amount > 0:
-            noise_vol = noise_amount / 500  # Scale noise volume
-            # Use anoisesrc mixed with original
-            # We'll use a workaround: add slight white noise via highpass of noise
-            filters.append(f"highpass=f=15000,volume={noise_vol},aecho=1:1:1:0.1")
+        # Add noise/static - we'll handle this separately in apply_audio_effects
+        # since it requires mixing two audio sources
 
         # Mono
         if self.audio_params.get('mono', False):
@@ -960,17 +1355,46 @@ class AudioEffectsPanel:
             return False
 
         filter_chain = self.build_ffmpeg_filter()
+        noise_amount = self.audio_params.get('noise_amount', 0)
+
         print(f"Applying audio filter: {filter_chain}")
 
         try:
-            cmd = [
-                "ffmpeg", "-y",
-                "-i", self.original_audio_path,
-                "-af", filter_chain,
-                "-ar", "44100",
-                "-ac", "2",
-                output_path
-            ]
+            if noise_amount > 0:
+                # Use complex filter to mix noise with audio
+                noise_vol = noise_amount / 100  # Scale 0-100 to 0-1
+                # Get audio duration first
+                probe_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                            "-of", "default=noprint_wrappers=1:nokey=1", self.original_audio_path]
+                probe_result = subprocess.run(probe_cmd, capture_output=True, text=True)
+                duration = float(probe_result.stdout.strip()) if probe_result.returncode == 0 else 10
+
+                # Build complex filter: apply effects to input, generate noise, mix them
+                if filter_chain != "anull":
+                    complex_filter = f"[0:a]{filter_chain}[processed];anoisesrc=d={duration}:c=pink:a={noise_vol}[noise];[processed][noise]amix=inputs=2:duration=first:weights=1 {noise_vol}[out]"
+                else:
+                    complex_filter = f"[0:a]acopy[processed];anoisesrc=d={duration}:c=pink:a={noise_vol}[noise];[processed][noise]amix=inputs=2:duration=first:weights=1 {noise_vol}[out]"
+
+                cmd = [
+                    "ffmpeg", "-y",
+                    "-i", self.original_audio_path,
+                    "-filter_complex", complex_filter,
+                    "-map", "[out]",
+                    "-ar", "44100",
+                    "-ac", "2",
+                    output_path
+                ]
+            else:
+                # Simple filter without noise
+                cmd = [
+                    "ffmpeg", "-y",
+                    "-i", self.original_audio_path,
+                    "-af", filter_chain,
+                    "-ar", "44100",
+                    "-ac", "2",
+                    output_path
+                ]
+
             result = subprocess.run(cmd, capture_output=True, text=True)
             if result.returncode == 0:
                 print(f"Audio effects applied: {output_path}")
@@ -1083,25 +1507,35 @@ class AudioEffectsPanel:
         # Stop audio first to release any file locks
         self.stop_audio()
 
+        # Determine the source type for status message
+        if self.custom_audio_loaded:
+            source_type = "Custom Audio"
+        else:
+            source_type = "Video Audio"
+
         if not self.preview_audio_path or not os.path.exists(self.preview_audio_path) or self.preview_audio_path == self.original_audio_path:
             # If no preview with effects, apply effects first
             self.processed_audio_path = os.path.join(self.temp_dir, "kept_audio.wav")
             if self.apply_audio_effects(self.processed_audio_path):
-                self.keep_status.config(text="Using: Processed Audio (Effects Applied)")
+                self.keep_status.config(text=f"Using: {source_type} (Effects Applied)")
                 print("Audio effects kept for final render")
             else:
-                self.keep_status.config(text="Using: Original Audio (Effect failed)")
-                self.processed_audio_path = None
+                self.keep_status.config(text=f"Using: {source_type} (No effects)")
+                # Still keep the source audio even if effects failed
+                try:
+                    shutil.copy(self.original_audio_path, self.processed_audio_path)
+                except:
+                    self.processed_audio_path = None
         else:
             # Copy preview to kept
             self.processed_audio_path = os.path.join(self.temp_dir, "kept_audio.wav")
             try:
                 shutil.copy(self.preview_audio_path, self.processed_audio_path)
-                self.keep_status.config(text="Using: Processed Audio (Effects Applied)")
+                self.keep_status.config(text=f"Using: {source_type} (Effects Applied)")
                 print("Audio effects kept for final render")
             except Exception as e:
                 print(f"Error keeping audio: {e}")
-                self.keep_status.config(text="Using: Original Audio (Copy failed)")
+                self.keep_status.config(text=f"Using: {source_type} (Copy failed)")
                 self.processed_audio_path = None
 
     def get_audio_for_render(self):
@@ -1394,6 +1828,12 @@ def apply_effects_to_frame(frame, prev_gray, frame_number, render_buffers):
             total_drops=effect_params['digital_rain_drops']
         )
 
+    if effect_states['rotation_enabled']:
+        output_frame = effects.rotate_frame(
+            output_frame, frame_number,
+            rotation_speed=effect_params['rotation_speed']
+        )
+
     return output_frame, current_gray, render_buffers
 
 
@@ -1478,6 +1918,7 @@ effect_states = {
     'prism_enabled': False,
     'spiral_warp_enabled': False,
     'digital_rain_enabled': False,
+    'rotation_enabled': False,
 }
 
 # Additional state variables
@@ -2098,6 +2539,12 @@ while True:
             total_drops=effect_params['digital_rain_drops']
         )
 
+    if live_preview_effects and effect_states['rotation_enabled']:
+        output_frame = effects.rotate_frame(
+            output_frame, total_frames_processed,
+            rotation_speed=effect_params['rotation_speed']
+        )
+
     # ----------------------------
     # Store Frame for Next Iteration
     # ----------------------------
@@ -2259,6 +2706,12 @@ while True:
         effect_states['digital_rain_enabled'] = not effect_states['digital_rain_enabled']
         if not effect_states['digital_rain_enabled']:
             digital_rain_drops_state = None
+
+    # Rotation effect
+    if was_key_just_pressed("q"):
+        effect_states['rotation_enabled'] = not effect_states['rotation_enabled']
+        print(f"Rotation: {'ON' if effect_states['rotation_enabled'] else 'OFF'}")
+
     # Audio Panel Hotkeys
     if was_key_just_pressed("+"):
         audio_panel.preview_effects()
@@ -2308,7 +2761,16 @@ while True:
     if cv2.waitKey(wait_time) & 0xFF == ord("q"):
         break
 
-    cv2.imshow("glitch mirror", output_frame)
+    # Apply preview scaling for performance
+    preview_scale = control_panel.preview_scale_var.get() if hasattr(control_panel, 'preview_scale_var') else 1.0
+    if preview_scale < 1.0:
+        display_height = int(output_frame.shape[0] * preview_scale)
+        display_width = int(output_frame.shape[1] * preview_scale)
+        display_frame = cv2.resize(output_frame, (display_width, display_height), interpolation=cv2.INTER_AREA)
+    else:
+        display_frame = output_frame
+
+    cv2.imshow("glitch mirror", display_frame)
 
 # ----------------------------
 # Cleanup

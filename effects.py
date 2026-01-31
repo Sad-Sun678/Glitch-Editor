@@ -1318,3 +1318,38 @@ def prism(frame, prism_offset=8):
     blue_channel = np.roll(blue_channel, prism_offset // 2, axis=0)
 
     return cv.merge((blue_channel, green_channel, red_channel))
+
+
+def rotate_frame(frame, frame_number, rotation_speed=0.5):
+    """
+    Continuously rotate the video frame in a circle.
+    rotation_speed: degrees per frame (positive = clockwise)
+    Maintains consistent size throughout rotation by scaling to fit.
+    """
+    frame_height, frame_width = frame.shape[:2]
+    center_x, center_y = frame_width / 2, frame_height / 2
+
+    # Calculate current rotation angle
+    angle = (frame_number * rotation_speed) % 360
+
+    # Calculate the scale factor needed to keep the rotated image fitting
+    # within the original frame size without any content being cut off
+    angle_rad = np.radians(angle)
+    cos_val = abs(np.cos(angle_rad))
+    sin_val = abs(np.sin(angle_rad))
+
+    # The rotated bounding box dimensions
+    rotated_width = frame_width * cos_val + frame_height * sin_val
+    rotated_height = frame_width * sin_val + frame_height * cos_val
+
+    # Scale factor to fit the rotated frame back into original dimensions
+    scale = min(frame_width / rotated_width, frame_height / rotated_height)
+
+    # Get rotation matrix with scale applied
+    rotation_matrix = cv.getRotationMatrix2D((center_x, center_y), angle, scale)
+
+    # Apply rotation - output stays same size as input
+    rotated = cv.warpAffine(frame, rotation_matrix, (frame_width, frame_height),
+                            borderMode=cv.BORDER_CONSTANT, borderValue=(0, 0, 0))
+
+    return rotated
