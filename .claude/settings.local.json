@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m py_compile:*)",
+      "Bash(python -c:*)",
+      "Bash(copy:*)",
+      "Bash(\".venv\\\\Scripts\\\\python.exe\" -c \"\nfrom effect_control_panel import EffectControlPanel\nfrom audio_effects_panel import AudioEffectsPanel  \nfrom timeline_panel import TimelinePanel\nfrom panel_utils import PRESETS_DIR, VIDEO_PRESETS_FILE, PYGAME_AVAILABLE\nprint\\(''All imports successful!''\\)\nprint\\(f''PYGAME_AVAILABLE: {PYGAME_AVAILABLE}''\\)\n\")",
+      "Bash(\".venv\\\\Scripts\\\\python.exe\":*)"
+    ]
+  }
+}
