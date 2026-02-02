@@ -41,6 +41,9 @@ class TimelinePanel:
         self.selected_audio = None
         self.is_playing = False
 
+        # Callback for seeking video when timeline is clicked
+        self.seek_callback = None  # Function(time_in_seconds) to seek video
+
         # Track heights
         self.effect_track_height = 40
         self.audio_track_height = 35
@@ -429,11 +432,17 @@ class TimelinePanel:
         x = self.timeline_canvas.canvasx(event.x)
         y = event.y
 
-        # Check if clicking on time ruler - set playhead
+        # Check if clicking on time ruler - set playhead and seek video
         if y < self.timeline_height:
             self.current_time = self.x_to_time(x)
             self.update_time_display()
             self.draw_timeline()
+            # Call seek callback to sync video position
+            if self.seek_callback:
+                try:
+                    self.seek_callback(self.current_time)
+                except Exception as e:
+                    print(f"Seek callback error: {e}")
             return
 
         # Check if clicking on effect keyframes
@@ -477,9 +486,23 @@ class TimelinePanel:
         self.draw_timeline()
 
     def on_canvas_drag(self, event):
-        """Handle drag on canvas for moving items."""
+        """Handle drag on canvas for moving items or scrubbing timeline."""
         x = self.timeline_canvas.canvasx(event.x)
+        y = event.y
         new_time = self.x_to_time(x)
+
+        # Check if dragging on time ruler - scrub video
+        if y < self.timeline_height:
+            self.current_time = max(0, min(new_time, self.total_duration))
+            self.update_time_display()
+            self.draw_timeline()
+            # Call seek callback to sync video position
+            if self.seek_callback:
+                try:
+                    self.seek_callback(self.current_time)
+                except Exception as e:
+                    pass  # Ignore errors during rapid scrubbing
+            return
 
         if self.selected_keyframe is not None:
             kf = self.effect_keyframes[self.selected_keyframe]

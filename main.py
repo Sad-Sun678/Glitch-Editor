@@ -18,7 +18,17 @@ import sys
 from effect_control_panel import EffectControlPanel
 from audio_effects_panel import AudioEffectsPanel
 from timeline_panel import TimelinePanel
+from detection_panel import DetectionControlPanel
 from panel_utils import PRESETS_DIR, VIDEO_PRESETS_FILE, AUDIO_PRESETS_FILE, TIMELINE_FILE, PYGAME_AVAILABLE
+import object_detection
+
+# Import performance optimizations
+try:
+    from performance import frame_skipper, perf_monitor, grayscale_cache
+    PERF_AVAILABLE = True
+except ImportError:
+    PERF_AVAILABLE = False
+    print("Performance module not available, running without optimizations")
 
 print("ffmpeg path:", shutil.which("ffmpeg"))
 
@@ -63,6 +73,64 @@ effect_params = {
     'digital_rain_drops': 200,
     'rotation_speed': 0.5,  # Degrees per frame
 }
+
+# Detection parameters dictionary - stores all detection/selective effect settings
+detection_params = {
+    'detection_enabled': False,
+    'detect_faces': True,
+    'detect_eyes': False,
+    'detect_bodies': False,
+    'detect_upper_body': False,
+    'detect_smiles': False,
+    'detect_cats': False,
+    'detect_plates': False,
+    'show_detection_boxes': False,
+    'detection_sensitivity': 1.1,
+    'min_neighbors': 5,
+    'use_tracking': True,
+    'face_effect_mode': 'none',
+    'face_pixelate_size': 10,
+    'face_blur_amount': 51,
+    'face_glitch_intensity': 20,
+    'face_hue_shift': 90,
+    'neon_color': 'cyan',
+    'mask_type': 'ellipse',
+    'mask_padding': 20,
+    'mask_feather': 20,
+    'bg_color': 'black',
+    # Performance settings
+    'detection_frame_skip': 3,  # Run detection every N frames
+    'body_frame_skip': 5,       # Bodies move slower, check less often
+    # Per-region effects settings
+    'per_region_mode': True,
+    'show_face_effects': True,
+    'exclude_faces_from_bg': True,
+}
+
+# Configure frame skipper if available
+if PERF_AVAILABLE:
+    frame_skipper.set_skip_interval('face_detection', 3)
+    frame_skipper.set_skip_interval('body_detection', 5)
+    frame_skipper.set_skip_interval('eye_detection', 3)
+    frame_skipper.set_skip_interval('upper_body_detection', 5)
+    frame_skipper.set_skip_interval('smile_detection', 4)
+    frame_skipper.set_skip_interval('cat_detection', 5)
+    frame_skipper.set_skip_interval('plate_detection', 5)
+
+# Detection tracker for smoothing
+detection_tracker = object_detection.DetectionTracker(smoothing_frames=5)
+
+# Region effect manager for per-region effects
+region_effect_manager = object_detection.get_region_effect_manager()
+
+# GIF exporter for animated exports
+gif_exporter = object_detection.get_gif_exporter()
+
+# Custom mask manager for draggable effect regions
+custom_mask_manager = object_detection.get_custom_mask_manager()
+
+# Data visualization for stylized detection overlays
+data_visualization = object_detection.get_data_visualization()
 
 
 def select_video_source():
@@ -407,6 +475,106 @@ def apply_effects_to_frame(frame, prev_gray, frame_number, render_buffers):
             rotation_speed=effect_params['rotation_speed']
         )
 
+    # Apply detection-based effects for rendering
+    if detection_params.get('detection_enabled', False):
+        detected_faces = []
+        if detection_params.get('detect_faces', True):
+            detected_faces = object_detection.detect_faces(
+                frame,
+                scale_factor=detection_params.get('detection_sensitivity', 1.1),
+                min_neighbors=detection_params.get('min_neighbors', 5)
+            )
+
+        face_effect_mode = detection_params.get('face_effect_mode', 'none')
+
+        if face_effect_mode != 'none' and len(detected_faces) > 0:
+            neon_color_name = detection_params.get('neon_color', 'cyan')
+            neon_colors = {
+                'cyan': (255, 255, 0), 'magenta': (255, 0, 255), 'yellow': (0, 255, 255),
+                'green': (0, 255, 0), 'red': (0, 0, 255), 'white': (255, 255, 255)
+            }
+            neon_color = neon_colors.get(neon_color_name, (255, 255, 0))
+
+            bg_color_name = detection_params.get('bg_color', 'black')
+            bg_colors = {
+                'black': (0, 0, 0), 'white': (255, 255, 255), 'green': (0, 255, 0),
+                'blue': (255, 0, 0), 'red': (0, 0, 255), 'gray': (128, 128, 128)
+            }
+            bg_color = bg_colors.get(bg_color_name, (0, 0, 0))
+
+            if face_effect_mode == 'pixelate':
+                output_frame = object_detection.face_pixelate(output_frame, detected_faces,
+                    pixel_size=detection_params.get('face_pixelate_size', 10))
+            elif face_effect_mode == 'blur':
+                output_frame = object_detection.face_blur(output_frame, detected_faces,
+                    blur_amount=detection_params.get('face_blur_amount', 51))
+            elif face_effect_mode == 'glitch':
+                output_frame = object_detection.face_glitch(output_frame, detected_faces,
+                    glitch_intensity=detection_params.get('face_glitch_intensity', 20))
+            elif face_effect_mode == 'thermal':
+                output_frame = object_detection.face_thermal(output_frame, detected_faces)
+            elif face_effect_mode == 'neon_outline':
+                output_frame = object_detection.face_neon_outline(output_frame, detected_faces, color=neon_color)
+            elif face_effect_mode == 'cartoon':
+                output_frame = object_detection.face_cartoon(output_frame, detected_faces)
+            elif face_effect_mode == 'color_shift':
+                output_frame = object_detection.face_swap_color(output_frame, detected_faces,
+                    hue_shift=detection_params.get('face_hue_shift', 90))
+            elif face_effect_mode == 'edge_highlight':
+                output_frame = object_detection.face_edge_highlight(output_frame, detected_faces)
+            elif face_effect_mode == 'vignette':
+                output_frame = object_detection.face_vignette(output_frame, detected_faces)
+            elif face_effect_mode == 'background_replace':
+                output_frame = object_detection.background_replace(output_frame, detected_faces,
+                    background_color=bg_color, feather=detection_params.get('mask_feather', 30))
+            elif face_effect_mode == 'apply_all_effects':
+                mask_type = detection_params.get('mask_type', 'ellipse')
+                padding = detection_params.get('mask_padding', 20)
+                feather = detection_params.get('mask_feather', 20)
+                if mask_type == 'ellipse':
+                    mask = object_detection.create_elliptical_mask(output_frame.shape, detected_faces, padding=padding, feather=feather)
+                else:
+                    mask = object_detection.create_detection_mask(output_frame.shape, detected_faces, padding=padding, feather=feather)
+                output_frame = object_detection.apply_effect_with_mask(frame, output_frame, mask, invert=False)
+            elif face_effect_mode == 'apply_all_effects_inverted':
+                mask_type = detection_params.get('mask_type', 'ellipse')
+                padding = detection_params.get('mask_padding', 20)
+                feather = detection_params.get('mask_feather', 20)
+                if mask_type == 'ellipse':
+                    mask = object_detection.create_elliptical_mask(output_frame.shape, detected_faces, padding=padding, feather=feather)
+                else:
+                    mask = object_detection.create_detection_mask(output_frame.shape, detected_faces, padding=padding, feather=feather)
+                output_frame = object_detection.apply_effect_with_mask(frame, output_frame, mask, invert=True)
+
+    # Apply baked textures for rendering
+    # This ensures baked face effects are ALWAYS included in renders
+    # regardless of whether face detection finds the same faces
+    show_face_effects = detection_params.get('show_face_effects', True)
+
+    if show_face_effects and region_effect_manager:
+        # First, apply all baked textures using their stored positions
+        # This is the most reliable way to ensure baked effects appear
+        output_frame = region_effect_manager.apply_all_baked_textures(output_frame)
+
+    # Apply custom mask regions for rendering
+    # This ensures custom mask effects (including 'restore_original') appear in final renders
+    if custom_mask_manager and custom_mask_manager.enabled:
+        output_frame = custom_mask_manager.apply_all_masks(
+            output_frame,
+            lambda f, et, ep, fn: custom_mask_manager._apply_region_effect(f, et, ep, fn),
+            frame_number,
+            original_frame=frame  # Pass original frame for 'restore_original' effect
+        )
+        # Note: Don't draw overlays/borders in final render - they're just for preview
+
+    # Apply data visualization for rendering (styled boxes, labels, connection lines)
+    # Uses stored detection positions to ensure viz appears in renders
+    # This avoids the problem of re-detected faces not having tracking IDs
+    if data_visualization and data_visualization.enabled:
+        # Use apply_for_render which uses stored detection positions
+        # This ensures selected faces get visualization even without re-detection matching
+        output_frame = data_visualization.apply_for_render(output_frame, frame_number)
+
     return output_frame, current_gray, render_buffers
 
 
@@ -603,6 +771,20 @@ if is_video_file:
 # Initialize Timeline Panel (only for video files)
 # ----------------------------
 timeline_panel = None
+
+
+def seek_video_to_time(time_seconds):
+    """Seek the video to a specific time in seconds. Called by timeline panel."""
+    global video_paused
+    if camera and is_video_file:
+        frame_number = int(time_seconds * video_fps)
+        frame_number = max(0, min(frame_number, total_video_frames - 1))
+        camera.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+        # Pause the video when scrubbing for better control
+        video_paused = True
+        print(f"Seeking to {time_seconds:.2f}s (frame {frame_number})")
+
+
 if is_video_file:
     timeline_panel = TimelinePanel(
         video_fps=video_fps,
@@ -611,6 +793,18 @@ if is_video_file:
         effect_params=effect_params
     )
     timeline_panel.create_panel()
+    timeline_panel.seek_callback = seek_video_to_time
+
+# ----------------------------
+# Initialize Detection Panel
+# ----------------------------
+detection_panel = DetectionControlPanel(detection_params)
+detection_panel.create_panel()
+detection_panel.region_effect_manager = region_effect_manager
+detection_panel.gif_exporter = gif_exporter
+detection_panel.detection_tracker = detection_tracker
+detection_panel.data_viz = data_visualization
+detection_panel.set_apply_effects_func(apply_effects_to_frame)
 
 # ----------------------------
 # Image Mode Setup
@@ -961,6 +1155,47 @@ transition_to_preset = 0
 current_colormap_preset = 0
 total_frames_processed = 0
 
+# ----------------------------
+# Mouse Callback for Custom Mask Regions
+# ----------------------------
+mouse_dragging = False
+preview_scale_factor = 1.0  # Track current preview scale for mouse coordinate adjustment
+
+
+def mouse_callback(event, x, y, flags, param):
+    """Handle mouse events for custom mask region interaction."""
+    global mouse_dragging, preview_scale_factor
+
+    if not custom_mask_manager.enabled:
+        return
+
+    # Adjust coordinates for preview scale
+    actual_x = int(x / preview_scale_factor)
+    actual_y = int(y / preview_scale_factor)
+
+    if event == cv2.EVENT_LBUTTONDOWN:
+        if custom_mask_manager.handle_mouse_down(actual_x, actual_y):
+            mouse_dragging = True
+            # Update the detection panel's region selector
+            if detection_panel and custom_mask_manager.selected_region_id:
+                detection_panel._update_region_selector()
+                detection_panel.custom_region_selector.set(custom_mask_manager.selected_region_id)
+                detection_panel._on_custom_region_selected(None)
+
+    elif event == cv2.EVENT_MOUSEMOVE:
+        if mouse_dragging:
+            custom_mask_manager.handle_mouse_move(actual_x, actual_y)
+
+    elif event == cv2.EVENT_LBUTTONUP:
+        if mouse_dragging:
+            custom_mask_manager.handle_mouse_up()
+            mouse_dragging = False
+
+
+# Set up mouse callback (will be applied when window is created)
+cv2.namedWindow(window_title, cv2.WINDOW_AUTOSIZE)
+cv2.setMouseCallback(window_title, mouse_callback)
+
 while app_running:
     # Check for source change request
     if request_source_change:
@@ -1017,6 +1252,9 @@ while app_running:
         time_echo_buffer = None
         digital_rain_drops_state = None
 
+        # Reset detection tracker
+        detection_tracker.clear()
+
         # Update control panel source label
         control_panel.update_source_label(get_source_display_name(media_config))
         control_panel.update_render_progress(0, "Ready")
@@ -1034,11 +1272,16 @@ while app_running:
                 effect_params=effect_params
             )
             timeline_panel.create_panel()
+            timeline_panel.seek_callback = seek_video_to_time
 
         # Print mode info
         if is_image_file:
             print("Image mode: Effects will be applied in real-time")
             print("Press ';' (semicolon) to save the current output with effects")
+
+        # Re-create window with mouse callback for custom masks
+        cv2.namedWindow(window_title, cv2.WINDOW_AUTOSIZE)
+        cv2.setMouseCallback(window_title, mouse_callback)
 
         # Reset frame counter
         total_frames_processed = 0
@@ -1076,7 +1319,17 @@ while app_running:
         if not frame_captured_successfully:
             break
 
-    current_frame_grayscale = cv2.cvtColor(current_frame, cv2.COLOR_BGR2GRAY)
+    # Start frame timing
+    if PERF_AVAILABLE:
+        perf_monitor.frame_start()
+
+    # Optimize: Use cached grayscale conversion if available
+    if PERF_AVAILABLE:
+        grayscale_cache.invalidate()  # New frame, invalidate cache
+        current_frame_grayscale = grayscale_cache.get_grayscale(current_frame)
+    else:
+        current_frame_grayscale = cv2.cvtColor(current_frame, cv2.COLOR_BGR2GRAY)
+
     output_frame = current_frame.copy()
 
     if previous_frame_grayscale is None:
@@ -1472,6 +1725,444 @@ while app_running:
         )
 
     # ----------------------------
+    # Exclude Selected Faces from Background Effects
+    # Restore original face regions if option enabled
+    # ----------------------------
+    if detection_params.get('exclude_faces_from_bg', True):
+        # Get selected faces from data visualization
+        selected_face_ids = []
+        if data_visualization:
+            selected_face_ids = data_visualization.get_selected_list()
+
+        if selected_face_ids:
+            tracked = detection_tracker.get_all_tracked()
+            padding = detection_params.get('mask_padding', 20)
+            feather = detection_params.get('mask_feather', 15)
+
+            # Create mask for selected faces
+            face_mask = np.zeros(output_frame.shape[:2], dtype=np.uint8)
+
+            for det_id in selected_face_ids:
+                if det_id in tracked:
+                    info = tracked[det_id]
+                    rect = info.get('rect', (0, 0, 0, 0))
+                    x, y, w, h = rect[:4]
+
+                    # Add padding
+                    x1 = max(0, x - padding)
+                    y1 = max(0, y - padding)
+                    x2 = min(output_frame.shape[1], x + w + padding)
+                    y2 = min(output_frame.shape[0], y + h + padding)
+
+                    # Use ellipse for natural face shape
+                    center = ((x1 + x2) // 2, (y1 + y2) // 2)
+                    axes = ((x2 - x1) // 2, (y2 - y1) // 2)
+                    cv2.ellipse(face_mask, center, axes, 0, 0, 360, 255, -1)
+
+            # Feather the mask edges
+            if feather > 0:
+                face_mask = cv2.GaussianBlur(face_mask, (feather*2+1, feather*2+1), 0)
+
+            # Blend: keep original (uneffected) faces, use effected background
+            mask_3ch = cv2.cvtColor(face_mask, cv2.COLOR_GRAY2BGR).astype(np.float32) / 255.0
+            output_frame = (current_frame.astype(np.float32) * mask_3ch +
+                           output_frame.astype(np.float32) * (1 - mask_3ch)).astype(np.uint8)
+
+    # ----------------------------
+    # Object Detection & Selective Effects (Optimized with frame skipping)
+    # ----------------------------
+    # Run detection if: continuous detection is enabled OR single-shot trigger is set
+    detection_enabled = detection_params.get('detection_enabled', False)
+    single_shot_triggered = detection_params.get('trigger_single_detection', False)
+    single_shot_active = detection_params.get('single_shot_mode', False)
+
+    # Also run when in single-shot mode with existing tracked detections (to apply effects)
+    has_tracked_detections = len(detection_tracker.get_all_tracked()) > 0 if single_shot_active else False
+
+    if detection_enabled or single_shot_triggered or has_tracked_detections:
+        # Use frame skipping for expensive detection operations
+        # Detections are cached and reused between frames for performance
+
+        detected_faces = []
+        detected_eyes = []
+        detected_bodies = []
+        detected_upper_bodies = []
+        detected_smiles = []
+        detected_cats = []
+        detected_plates = []
+
+        # === Single-Shot Detection Mode ===
+        # For static images - only detect when button pressed
+        single_shot_mode = detection_params.get('single_shot_mode', False)
+        trigger_detection = detection_params.get('trigger_single_detection', False)
+
+        # Enable static mode for images or single-shot mode to prevent auto-cleanup
+        # This keeps detections persistent until manually cleared
+        use_static_mode = is_image_file or single_shot_mode
+        detection_tracker.set_static_mode(use_static_mode)
+
+        # Check if we should skip detection (single-shot mode and no trigger)
+        should_detect = not single_shot_mode or trigger_detection
+
+        # Clear the trigger flag after reading
+        if trigger_detection:
+            detection_params['trigger_single_detection'] = False
+            # In single-shot mode, clear non-kept detections before new detection
+            if single_shot_mode:
+                detection_tracker.clear_non_kept()
+
+        # Skip detection if in single-shot mode and no trigger (use cached results)
+        # Also refresh last_seen to prevent cleanup when static_mode is False
+        if single_shot_mode and not trigger_detection:
+            # Use existing tracked detections from previous single-shot
+            tracked = detection_tracker.get_all_tracked()
+            # Refresh last_seen to keep detections alive
+            detection_tracker.refresh_all_last_seen()
+            for det_id, info in tracked.items():
+                det_type = info.get('type', 'unknown')
+                rect = info.get('rect', (0, 0, 0, 0))
+                det_tuple = (*rect, det_id) if len(rect) == 4 else rect
+
+                if det_type == 'face':
+                    detected_faces.append(det_tuple)
+                elif det_type == 'eye':
+                    detected_eyes.append(det_tuple)
+                elif det_type == 'body':
+                    detected_bodies.append(det_tuple)
+                elif det_type == 'upper_body':
+                    detected_upper_bodies.append(det_tuple)
+                elif det_type == 'smile':
+                    detected_smiles.append(det_tuple)
+                elif det_type == 'cat':
+                    detected_cats.append(det_tuple)
+                elif det_type == 'plate':
+                    detected_plates.append(det_tuple)
+
+        if should_detect and detection_params.get('detect_faces', True):
+            if PERF_AVAILABLE and frame_skipper.should_run('face_detection', total_frames_processed):
+                raw_faces = object_detection.detect_faces(
+                    current_frame,
+                    scale_factor=detection_params.get('detection_sensitivity', 1.1),
+                    min_neighbors=detection_params.get('min_neighbors', 5)
+                )
+                # Apply tracking for smoother detections with persistent IDs
+                if detection_params.get('use_tracking', True):
+                    detected_faces = detection_tracker.update(raw_faces, 'face')
+                else:
+                    detected_faces = raw_faces
+                frame_skipper.set_cached('face_detection', detected_faces)
+            elif PERF_AVAILABLE:
+                detected_faces = frame_skipper.get_cached('face_detection') or []
+                # Refresh last_seen when using cached results to prevent cleanup
+                if use_static_mode:
+                    detection_tracker.refresh_all_last_seen()
+            else:
+                raw_faces = object_detection.detect_faces(
+                    current_frame,
+                    scale_factor=detection_params.get('detection_sensitivity', 1.1),
+                    min_neighbors=detection_params.get('min_neighbors', 5)
+                )
+                if detection_params.get('use_tracking', True):
+                    detected_faces = detection_tracker.update(raw_faces, 'face')
+                else:
+                    detected_faces = raw_faces
+
+        if should_detect and detection_params.get('detect_eyes', False) and detected_faces:
+            if PERF_AVAILABLE and frame_skipper.should_run('eye_detection', total_frames_processed):
+                detected_eyes = object_detection.detect_eyes(current_frame, detected_faces)
+                frame_skipper.set_cached('eye_detection', detected_eyes)
+            elif PERF_AVAILABLE:
+                detected_eyes = frame_skipper.get_cached('eye_detection') or []
+            else:
+                detected_eyes = object_detection.detect_eyes(current_frame, detected_faces)
+
+        if should_detect and detection_params.get('detect_bodies', False):
+            if PERF_AVAILABLE and frame_skipper.should_run('body_detection', total_frames_processed):
+                detected_bodies = object_detection.detect_bodies(current_frame)
+                frame_skipper.set_cached('body_detection', detected_bodies)
+            elif PERF_AVAILABLE:
+                detected_bodies = frame_skipper.get_cached('body_detection') or []
+            else:
+                detected_bodies = object_detection.detect_bodies(current_frame)
+
+        if should_detect and detection_params.get('detect_upper_body', False):
+            if PERF_AVAILABLE and frame_skipper.should_run('upper_body_detection', total_frames_processed):
+                detected_upper_bodies = object_detection.detect_upper_body(current_frame)
+                frame_skipper.set_cached('upper_body_detection', detected_upper_bodies)
+            elif PERF_AVAILABLE:
+                detected_upper_bodies = frame_skipper.get_cached('upper_body_detection') or []
+            else:
+                detected_upper_bodies = object_detection.detect_upper_body(current_frame)
+
+        if should_detect and detection_params.get('detect_smiles', False) and detected_faces:
+            if PERF_AVAILABLE and frame_skipper.should_run('smile_detection', total_frames_processed):
+                detected_smiles = object_detection.detect_smiles(current_frame, detected_faces)
+                frame_skipper.set_cached('smile_detection', detected_smiles)
+            elif PERF_AVAILABLE:
+                detected_smiles = frame_skipper.get_cached('smile_detection') or []
+            else:
+                detected_smiles = object_detection.detect_smiles(current_frame, detected_faces)
+
+        if should_detect and detection_params.get('detect_cats', False):
+            if PERF_AVAILABLE and frame_skipper.should_run('cat_detection', total_frames_processed):
+                detected_cats = object_detection.detect_cat_faces(current_frame)
+                frame_skipper.set_cached('cat_detection', detected_cats)
+            elif PERF_AVAILABLE:
+                detected_cats = frame_skipper.get_cached('cat_detection') or []
+            else:
+                detected_cats = object_detection.detect_cat_faces(current_frame)
+
+        if should_detect and detection_params.get('detect_plates', False):
+            if PERF_AVAILABLE and frame_skipper.should_run('plate_detection', total_frames_processed):
+                detected_plates = object_detection.detect_license_plates(current_frame)
+                frame_skipper.set_cached('plate_detection', detected_plates)
+            elif PERF_AVAILABLE:
+                detected_plates = frame_skipper.get_cached('plate_detection') or []
+            else:
+                detected_plates = object_detection.detect_license_plates(current_frame)
+
+        # Apply face effect based on mode
+        face_effect_mode = detection_params.get('face_effect_mode', 'none')
+
+        if face_effect_mode != 'none' and len(detected_faces) > 0:
+            # Get neon color
+            neon_color_name = detection_params.get('neon_color', 'cyan')
+            neon_colors = {
+                'cyan': (255, 255, 0),
+                'magenta': (255, 0, 255),
+                'yellow': (0, 255, 255),
+                'green': (0, 255, 0),
+                'red': (0, 0, 255),
+                'white': (255, 255, 255)
+            }
+            neon_color = neon_colors.get(neon_color_name, (255, 255, 0))
+
+            # Get background color
+            bg_color_name = detection_params.get('bg_color', 'black')
+            bg_colors = {
+                'black': (0, 0, 0),
+                'white': (255, 255, 255),
+                'green': (0, 255, 0),
+                'blue': (255, 0, 0),
+                'red': (0, 0, 255),
+                'gray': (128, 128, 128)
+            }
+            bg_color = bg_colors.get(bg_color_name, (0, 0, 0))
+
+            if face_effect_mode == 'pixelate':
+                output_frame = object_detection.face_pixelate(
+                    output_frame, detected_faces,
+                    pixel_size=detection_params.get('face_pixelate_size', 10)
+                )
+            elif face_effect_mode == 'blur':
+                output_frame = object_detection.face_blur(
+                    output_frame, detected_faces,
+                    blur_amount=detection_params.get('face_blur_amount', 51)
+                )
+            elif face_effect_mode == 'glitch':
+                output_frame = object_detection.face_glitch(
+                    output_frame, detected_faces,
+                    glitch_intensity=detection_params.get('face_glitch_intensity', 20)
+                )
+            elif face_effect_mode == 'thermal':
+                output_frame = object_detection.face_thermal(output_frame, detected_faces)
+            elif face_effect_mode == 'neon_outline':
+                output_frame = object_detection.face_neon_outline(
+                    output_frame, detected_faces, color=neon_color
+                )
+            elif face_effect_mode == 'cartoon':
+                output_frame = object_detection.face_cartoon(output_frame, detected_faces)
+            elif face_effect_mode == 'color_shift':
+                output_frame = object_detection.face_swap_color(
+                    output_frame, detected_faces,
+                    hue_shift=detection_params.get('face_hue_shift', 90)
+                )
+            elif face_effect_mode == 'edge_highlight':
+                output_frame = object_detection.face_edge_highlight(output_frame, detected_faces)
+            elif face_effect_mode == 'vignette':
+                output_frame = object_detection.face_vignette(output_frame, detected_faces)
+            elif face_effect_mode == 'background_replace':
+                output_frame = object_detection.background_replace(
+                    output_frame, detected_faces,
+                    background_color=bg_color,
+                    feather=detection_params.get('mask_feather', 30)
+                )
+            elif face_effect_mode == 'apply_all_effects':
+                # Apply all enabled effects only to face regions using mask
+                mask_type = detection_params.get('mask_type', 'ellipse')
+                padding = detection_params.get('mask_padding', 20)
+                feather = detection_params.get('mask_feather', 20)
+
+                if mask_type == 'ellipse':
+                    mask = object_detection.create_elliptical_mask(
+                        output_frame.shape, detected_faces, padding=padding, feather=feather
+                    )
+                else:
+                    mask = object_detection.create_detection_mask(
+                        output_frame.shape, detected_faces, padding=padding, feather=feather
+                    )
+
+                # Blend: effects on faces, original elsewhere
+                output_frame = object_detection.apply_effect_with_mask(
+                    current_frame, output_frame, mask, invert=False
+                )
+            elif face_effect_mode == 'apply_all_effects_inverted':
+                # Apply all enabled effects everywhere EXCEPT face regions
+                mask_type = detection_params.get('mask_type', 'ellipse')
+                padding = detection_params.get('mask_padding', 20)
+                feather = detection_params.get('mask_feather', 20)
+
+                if mask_type == 'ellipse':
+                    mask = object_detection.create_elliptical_mask(
+                        output_frame.shape, detected_faces, padding=padding, feather=feather
+                    )
+                else:
+                    mask = object_detection.create_detection_mask(
+                        output_frame.shape, detected_faces, padding=padding, feather=feather
+                    )
+
+                # Blend: original on faces, effects elsewhere
+                output_frame = object_detection.apply_effect_with_mask(
+                    current_frame, output_frame, mask, invert=True
+                )
+
+        # Per-region effects mode (independent effect stacks)
+        # Respects show_face_effects toggle for performance
+        show_face_effects = detection_params.get('show_face_effects', True)
+        per_region_enabled = detection_params.get('per_region_mode', False)
+
+        if per_region_enabled and show_face_effects:
+            detections_dict = {
+                'faces': detected_faces,
+                'eyes': detected_eyes,
+                'bodies': detected_bodies,
+                'upper_bodies': detected_upper_bodies,
+                'smiles': detected_smiles,
+                'cats': detected_cats,
+                'plates': detected_plates
+            }
+            output_frame = region_effect_manager.apply_all_region_effects(
+                output_frame, detections_dict, total_frames_processed,
+                original_frame=current_frame  # Pass original for 'restore_original' effect
+            )
+
+            # Also apply all baked textures directly using their stored positions
+            # This ensures baked effects show even if detection IDs don't match
+            output_frame = region_effect_manager.apply_all_baked_textures(output_frame)
+
+        # ----------------------------
+        # Bake Effect Stack to Faces (after effects are applied)
+        # Capture current effected regions as permanent textures
+        # ----------------------------
+        if detection_params.get('bake_effect_stack', False):
+            bake_selected_ids = detection_params.get('bake_selected_ids', [])
+            if bake_selected_ids:
+                tracked = detection_tracker.get_all_tracked()
+                padding = detection_params.get('mask_padding', 20)
+
+                baked_count = 0
+                for det_id in bake_selected_ids:
+                    if det_id in tracked:
+                        info = tracked[det_id]
+                        rect = info.get('rect', (0, 0, 0, 0))
+                        det_type = info.get('type', 'face')
+                        region_id = f"{det_type}_{det_id}"
+
+                        # Bake the current effected frame region
+                        region_effect_manager.bake_effect_texture(
+                            region_id, output_frame, rect, padding=padding
+                        )
+                        # Clear the effect stack since it's now baked
+                        region_effect_manager.clear_effect_stack(region_id)
+                        baked_count += 1
+                        print(f"Baked effects for {region_id}")
+
+                print(f"Baked {baked_count} face(s) with current effect stack")
+
+            # Clear the bake request flag
+            detection_params['bake_effect_stack'] = False
+            detection_params['bake_selected_ids'] = []
+
+        # Draw debug boxes if enabled
+        if detection_params.get('show_detection_boxes', False):
+            if detected_faces:
+                output_frame = object_detection.draw_detection_boxes(
+                    output_frame, detected_faces, color=(0, 255, 0), label="Face"
+                )
+            if detected_eyes:
+                output_frame = object_detection.draw_detection_boxes(
+                    output_frame, detected_eyes, color=(255, 0, 0), label="Eye"
+                )
+            if detected_bodies:
+                output_frame = object_detection.draw_detection_boxes(
+                    output_frame, detected_bodies, color=(0, 0, 255), label="Body"
+                )
+            if detected_upper_bodies:
+                output_frame = object_detection.draw_detection_boxes(
+                    output_frame, detected_upper_bodies, color=(255, 255, 0), label="UpperBody"
+                )
+            if detected_smiles:
+                output_frame = object_detection.draw_detection_boxes(
+                    output_frame, detected_smiles, color=(255, 0, 255), label="Smile"
+                )
+            if detected_cats:
+                output_frame = object_detection.draw_detection_boxes(
+                    output_frame, detected_cats, color=(0, 255, 255), label="Cat"
+                )
+            if detected_plates:
+                output_frame = object_detection.draw_detection_boxes(
+                    output_frame, detected_plates, color=(128, 128, 255), label="Plate"
+                )
+
+        # Apply data visualization effects (styled detection boxes, connections, etc.)
+        if data_visualization.enabled:
+            detections_dict = {
+                'faces': detected_faces,
+                'eyes': detected_eyes,
+                'bodies': detected_bodies,
+                'upper_bodies': detected_upper_bodies,
+                'smiles': detected_smiles,
+                'cats': detected_cats,
+                'plates': detected_plates
+            }
+
+            # Update stored rect positions for selected detections
+            # This ensures rendering uses the latest positions
+            for det_type, detections in detections_dict.items():
+                for det in detections:
+                    if len(det) >= 5:  # Has tracking ID
+                        det_id = det[4]
+                        if data_visualization.is_selected(det_id):
+                            data_visualization.update_detection_rect(det_id, det, det_type)
+
+            output_frame = data_visualization.apply_all(output_frame, detections_dict, total_frames_processed)
+
+    # ----------------------------
+    # Custom Mask Regions (Draggable Effect Zones)
+    # ----------------------------
+    if custom_mask_manager.enabled:
+        # Apply custom mask effects (pass original_frame for 'restore_original' effect)
+        output_frame = custom_mask_manager.apply_all_masks(
+            output_frame,
+            lambda f, et, ep, fn: custom_mask_manager._apply_region_effect(f, et, ep, fn),
+            total_frames_processed,
+            original_frame=current_frame  # For 'restore_original' to cut through effects
+        )
+        # Draw region overlays (borders/handles)
+        output_frame = custom_mask_manager.draw_all_overlays(output_frame)
+
+    # ----------------------------
+    # GIF Rendering - Update source frame for detection panel
+    # ----------------------------
+    # Pass current source frame and video path to detection panel for GIF rendering
+    if detection_panel:
+        video_path_for_gif = source_path if is_video_file else None
+        detection_panel.set_render_source(current_frame, video_path_for_gif)
+        # Update GIF status periodically
+        if total_frames_processed % 10 == 0:
+            detection_panel._update_gif_status()
+
+    # ----------------------------
     # Store Frame for Next Iteration
     # ----------------------------
     previous_frame_grayscale = current_frame_grayscale.copy()
@@ -1645,6 +2336,14 @@ while app_running:
         if was_key_just_pressed("-"):
             audio_panel.stop_audio()
 
+    # Detection toggle (= key)
+    if was_key_just_pressed("="):
+        detection_params['detection_enabled'] = not detection_params['detection_enabled']
+        print(f"Face Detection: {'ON' if detection_params['detection_enabled'] else 'OFF'}")
+        # Sync with panel if it exists
+        if detection_panel and detection_panel.vars.get('detection_enabled'):
+            detection_panel.vars['detection_enabled'].set(detection_params['detection_enabled'])
+
     # Image Mode: Save with ';' key (since Ctrl+S may conflict)
     if is_image_file and was_key_just_pressed(";"):
         save_image_with_effects()
@@ -1700,6 +2399,13 @@ while app_running:
     except Exception:
         pass
 
+    # Update detection panel GUI
+    try:
+        if detection_panel:
+            detection_panel.update()
+    except Exception:
+        pass
+
     # Quit application
     try:
         # Use frame_delay for video/image, 1 for webcam (for responsiveness)
@@ -1711,14 +2417,29 @@ while app_running:
     except Exception:
         break
 
+    # End frame timing and get FPS
+    if PERF_AVAILABLE:
+        perf_monitor.frame_end()
+
     # Apply preview scaling for performance
     preview_scale = control_panel.preview_scale_var.get() if hasattr(control_panel, 'preview_scale_var') else 1.0
+    preview_scale_factor = preview_scale  # Update global for mouse callback
     if preview_scale < 1.0:
         display_height = int(output_frame.shape[0] * preview_scale)
         display_width = int(output_frame.shape[1] * preview_scale)
         display_frame = cv2.resize(output_frame, (display_width, display_height), interpolation=cv2.INTER_AREA)
     else:
         display_frame = output_frame
+
+    # Draw FPS counter on frame (optional, can be toggled)
+    if PERF_AVAILABLE and hasattr(control_panel, 'show_fps_var') and control_panel.show_fps_var.get():
+        fps = perf_monitor.get_fps()
+        frame_time = perf_monitor.get_frame_time_ms()
+        fps_text = f"FPS: {fps:.1f} ({frame_time:.1f}ms)"
+        cv2.putText(display_frame, fps_text, (10, 25),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 3)
+        cv2.putText(display_frame, fps_text, (10, 25),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 1)
 
     cv2.imshow(window_title, display_frame)
 
@@ -1737,6 +2458,16 @@ except Exception:
 try:
     if timeline_panel:
         timeline_panel.close()
+except Exception:
+    pass
+try:
+    if detection_panel:
+        detection_panel.close()
+except Exception:
+    pass
+try:
+    if region_effect_manager:
+        region_effect_manager.cleanup()
 except Exception:
     pass
 try:

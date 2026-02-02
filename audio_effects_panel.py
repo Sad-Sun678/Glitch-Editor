@@ -60,28 +60,62 @@ class AudioEffectsPanel:
             'noise_amount': 0,      # 0 to 100
             'telephone': False,
             'mono': False,
+            # NEW: Sampling & Glitch Effects
+            'stutter_count': 0,     # 0 to 16 repeats
+            'stutter_length': 100,  # 10 to 500 ms per stutter
+            'vinyl_crackle': 0,     # 0 to 100
+            'tape_wobble': 0.0,     # 0 to 1.0 (wow and flutter)
+            'sample_rate': 44100,   # 4000 to 44100 Hz (sample rate crush)
+            'gate_threshold': 0,    # 0 to 100 (noise gate)
+            'compressor': 0,        # 0 to 100 (compression amount)
+            'stereo_width': 100,    # 0 to 200 (0=mono, 100=normal, 200=wide)
+            'fade_in': 0,           # 0 to 5000 ms
+            'fade_out': 0,          # 0 to 5000 ms
+            'trim_start': 0,        # 0 to 100 (percentage)
+            'trim_end': 100,        # 0 to 100 (percentage)
+            'ring_mod_freq': 0,     # 0 to 2000 Hz (ring modulation)
+            'robot_voice': False,   # Vocoder-style effect
+            'whisper': False,       # Breathy whisper effect
+            'megaphone': False,     # Megaphone/bullhorn effect
+            'radio_static': 0,      # 0 to 100 (radio interference)
+            'underwater_bubble': False,  # Bubble sounds
+            'tape_stop': False,     # Tape stop slowdown effect
+            'tape_start': False,    # Tape start speedup effect
         }
 
         self.slider_vars = {}
+
+        # Default new params to add to all presets
+        self._new_param_defaults = {
+            'stutter_count': 0, 'stutter_length': 100, 'vinyl_crackle': 0,
+            'tape_wobble': 0.0, 'sample_rate': 44100, 'gate_threshold': 0,
+            'compressor': 0, 'stereo_width': 100, 'fade_in': 0, 'fade_out': 0,
+            'trim_start': 0, 'trim_end': 100, 'ring_mod_freq': 0,
+            'robot_voice': False, 'whisper': False, 'megaphone': False,
+            'radio_static': 0, 'underwater_bubble': False, 'tape_stop': False, 'tape_start': False
+        }
+
         self.presets = {
             'Normal': {'speed': 1.0, 'pitch': 1.0, 'bass': 0, 'treble': 0, 'echo_delay': 0,
                       'echo_decay': 0.0, 'reverb': 0, 'distortion': 0, 'lowpass': 20000,
                       'highpass': 20, 'volume': 1.0, 'reverse': False, 'bitcrush': 16,
                       'flanger_delay': 0, 'flanger_depth': 0, 'tremolo_freq': 0, 'tremolo_depth': 0.0,
                       'vibrato_freq': 0, 'vibrato_depth': 0.0, 'phaser_speed': 0.0, 'chorus_depth': 0,
-                      'noise_amount': 0, 'telephone': False, 'mono': False},
+                      'noise_amount': 0, 'telephone': False, 'mono': False, **self._new_param_defaults},
             'Underwater': {'speed': 0.9, 'pitch': 0.85, 'bass': 10, 'treble': -15, 'echo_delay': 100,
                           'echo_decay': 0.4, 'reverb': 60, 'distortion': 0, 'lowpass': 800,
                           'highpass': 20, 'volume': 1.0, 'reverse': False, 'bitcrush': 16,
                           'flanger_delay': 5, 'flanger_depth': 3, 'tremolo_freq': 0, 'tremolo_depth': 0.0,
                           'vibrato_freq': 2, 'vibrato_depth': 0.3, 'phaser_speed': 0.3, 'chorus_depth': 4,
-                          'noise_amount': 0, 'telephone': False, 'mono': False},
+                          'noise_amount': 0, 'telephone': False, 'mono': False,
+                          'underwater_bubble': True, **{k: v for k, v in self._new_param_defaults.items() if k != 'underwater_bubble'}},
             'Radio': {'speed': 1.0, 'pitch': 1.0, 'bass': -10, 'treble': 5, 'echo_delay': 0,
                      'echo_decay': 0.0, 'reverb': 0, 'distortion': 10, 'lowpass': 4000,
                      'highpass': 300, 'volume': 1.0, 'reverse': False, 'bitcrush': 16,
                      'flanger_delay': 0, 'flanger_depth': 0, 'tremolo_freq': 0, 'tremolo_depth': 0.0,
                      'vibrato_freq': 0, 'vibrato_depth': 0.0, 'phaser_speed': 0.0, 'chorus_depth': 0,
-                     'noise_amount': 15, 'telephone': False, 'mono': True},
+                     'noise_amount': 15, 'telephone': False, 'mono': True,
+                     'radio_static': 20, **{k: v for k, v in self._new_param_defaults.items() if k != 'radio_static'}},
             'Cave Echo': {'speed': 1.0, 'pitch': 0.95, 'bass': 5, 'treble': -5, 'echo_delay': 300,
                          'echo_decay': 0.6, 'reverb': 80, 'distortion': 0, 'lowpass': 20000,
                          'highpass': 20, 'volume': 0.9, 'reverse': False, 'bitcrush': 16,
@@ -153,7 +187,83 @@ class AudioEffectsPanel:
                       'highpass': 20, 'volume': 0.9, 'reverse': False, 'bitcrush': 16,
                       'flanger_delay': 6, 'flanger_depth': 3, 'tremolo_freq': 0, 'tremolo_depth': 0.0,
                       'vibrato_freq': 1, 'vibrato_depth': 0.15, 'phaser_speed': 0.3, 'chorus_depth': 5,
-                      'noise_amount': 0, 'telephone': False, 'mono': False},
+                      'noise_amount': 0, 'telephone': False, 'mono': False, **self._new_param_defaults},
+            # NEW CREATIVE PRESETS FOR SAMPLING
+            'Vinyl Record': {'speed': 1.0, 'pitch': 1.0, 'bass': 3, 'treble': -5, 'echo_delay': 0,
+                            'echo_decay': 0.0, 'reverb': 5, 'distortion': 3, 'lowpass': 12000,
+                            'highpass': 40, 'volume': 0.95, 'reverse': False, 'bitcrush': 16,
+                            'flanger_delay': 0, 'flanger_depth': 0, 'tremolo_freq': 0, 'tremolo_depth': 0.0,
+                            'vibrato_freq': 0.3, 'vibrato_depth': 0.05, 'phaser_speed': 0.0, 'chorus_depth': 0,
+                            'noise_amount': 5, 'telephone': False, 'mono': False,
+                            'vinyl_crackle': 40, 'tape_wobble': 0.1, **{k: v for k, v in self._new_param_defaults.items()
+                            if k not in ['vinyl_crackle', 'tape_wobble']}},
+            'Glitch Stutter': {'speed': 1.0, 'pitch': 1.0, 'bass': 0, 'treble': 0, 'echo_delay': 30,
+                              'echo_decay': 0.3, 'reverb': 0, 'distortion': 20, 'lowpass': 20000,
+                              'highpass': 20, 'volume': 1.0, 'reverse': False, 'bitcrush': 10,
+                              'flanger_delay': 0, 'flanger_depth': 0, 'tremolo_freq': 0, 'tremolo_depth': 0.0,
+                              'vibrato_freq': 0, 'vibrato_depth': 0.0, 'phaser_speed': 0.0, 'chorus_depth': 0,
+                              'noise_amount': 5, 'telephone': False, 'mono': False,
+                              'stutter_count': 8, 'stutter_length': 50, **{k: v for k, v in self._new_param_defaults.items()
+                              if k not in ['stutter_count', 'stutter_length']}},
+            'Tape Stop': {'speed': 1.0, 'pitch': 1.0, 'bass': 5, 'treble': -3, 'echo_delay': 0,
+                         'echo_decay': 0.0, 'reverb': 0, 'distortion': 0, 'lowpass': 10000,
+                         'highpass': 20, 'volume': 1.0, 'reverse': False, 'bitcrush': 16,
+                         'flanger_delay': 0, 'flanger_depth': 0, 'tremolo_freq': 0, 'tremolo_depth': 0.0,
+                         'vibrato_freq': 0, 'vibrato_depth': 0.0, 'phaser_speed': 0.0, 'chorus_depth': 0,
+                         'noise_amount': 0, 'telephone': False, 'mono': False,
+                         'tape_stop': True, **{k: v for k, v in self._new_param_defaults.items() if k != 'tape_stop'}},
+            '8-Bit Retro': {'speed': 1.0, 'pitch': 1.0, 'bass': 0, 'treble': 5, 'echo_delay': 0,
+                           'echo_decay': 0.0, 'reverb': 10, 'distortion': 10, 'lowpass': 8000,
+                           'highpass': 100, 'volume': 1.0, 'reverse': False, 'bitcrush': 4,
+                           'flanger_delay': 0, 'flanger_depth': 0, 'tremolo_freq': 0, 'tremolo_depth': 0.0,
+                           'vibrato_freq': 0, 'vibrato_depth': 0.0, 'phaser_speed': 0.0, 'chorus_depth': 0,
+                           'noise_amount': 0, 'telephone': False, 'mono': True,
+                           'sample_rate': 11025, **{k: v for k, v in self._new_param_defaults.items() if k != 'sample_rate'}},
+            'Megaphone': {'speed': 1.0, 'pitch': 1.0, 'bass': -15, 'treble': 10, 'echo_delay': 0,
+                         'echo_decay': 0.0, 'reverb': 5, 'distortion': 40, 'lowpass': 4000,
+                         'highpass': 500, 'volume': 1.2, 'reverse': False, 'bitcrush': 14,
+                         'flanger_delay': 0, 'flanger_depth': 0, 'tremolo_freq': 0, 'tremolo_depth': 0.0,
+                         'vibrato_freq': 0, 'vibrato_depth': 0.0, 'phaser_speed': 0.0, 'chorus_depth': 0,
+                         'noise_amount': 10, 'telephone': False, 'mono': True,
+                         'megaphone': True, 'compressor': 60, **{k: v for k, v in self._new_param_defaults.items()
+                         if k not in ['megaphone', 'compressor']}},
+            'Whisper Ghost': {'speed': 0.95, 'pitch': 1.1, 'bass': -10, 'treble': 8, 'echo_delay': 200,
+                             'echo_decay': 0.5, 'reverb': 80, 'distortion': 0, 'lowpass': 8000,
+                             'highpass': 200, 'volume': 0.7, 'reverse': False, 'bitcrush': 16,
+                             'flanger_delay': 5, 'flanger_depth': 3, 'tremolo_freq': 2, 'tremolo_depth': 0.2,
+                             'vibrato_freq': 0, 'vibrato_depth': 0.0, 'phaser_speed': 0.5, 'chorus_depth': 4,
+                             'noise_amount': 15, 'telephone': False, 'mono': False,
+                             'whisper': True, **{k: v for k, v in self._new_param_defaults.items() if k != 'whisper'}},
+            'Ring Mod Chaos': {'speed': 1.0, 'pitch': 1.0, 'bass': 0, 'treble': 0, 'echo_delay': 50,
+                              'echo_decay': 0.2, 'reverb': 20, 'distortion': 15, 'lowpass': 20000,
+                              'highpass': 20, 'volume': 1.0, 'reverse': False, 'bitcrush': 16,
+                              'flanger_delay': 0, 'flanger_depth': 0, 'tremolo_freq': 0, 'tremolo_depth': 0.0,
+                              'vibrato_freq': 0, 'vibrato_depth': 0.0, 'phaser_speed': 0.0, 'chorus_depth': 0,
+                              'noise_amount': 0, 'telephone': False, 'mono': False,
+                              'ring_mod_freq': 440, **{k: v for k, v in self._new_param_defaults.items() if k != 'ring_mod_freq'}},
+            'Compressed Punch': {'speed': 1.0, 'pitch': 1.0, 'bass': 8, 'treble': 3, 'echo_delay': 0,
+                                'echo_decay': 0.0, 'reverb': 0, 'distortion': 5, 'lowpass': 20000,
+                                'highpass': 30, 'volume': 1.0, 'reverse': False, 'bitcrush': 16,
+                                'flanger_delay': 0, 'flanger_depth': 0, 'tremolo_freq': 0, 'tremolo_depth': 0.0,
+                                'vibrato_freq': 0, 'vibrato_depth': 0.0, 'phaser_speed': 0.0, 'chorus_depth': 0,
+                                'noise_amount': 0, 'telephone': False, 'mono': False,
+                                'compressor': 80, 'gate_threshold': 10, **{k: v for k, v in self._new_param_defaults.items()
+                                if k not in ['compressor', 'gate_threshold']}},
+            'Wide Stereo': {'speed': 1.0, 'pitch': 1.0, 'bass': 0, 'treble': 3, 'echo_delay': 20,
+                           'echo_decay': 0.1, 'reverb': 15, 'distortion': 0, 'lowpass': 20000,
+                           'highpass': 20, 'volume': 1.0, 'reverse': False, 'bitcrush': 16,
+                           'flanger_delay': 3, 'flanger_depth': 2, 'tremolo_freq': 0, 'tremolo_depth': 0.0,
+                           'vibrato_freq': 0, 'vibrato_depth': 0.0, 'phaser_speed': 0.2, 'chorus_depth': 5,
+                           'noise_amount': 0, 'telephone': False, 'mono': False,
+                           'stereo_width': 180, **{k: v for k, v in self._new_param_defaults.items() if k != 'stereo_width'}},
+            'Sample Destroyer': {'speed': 1.0, 'pitch': 1.0, 'bass': 5, 'treble': -10, 'echo_delay': 0,
+                                'echo_decay': 0.0, 'reverb': 0, 'distortion': 50, 'lowpass': 4000,
+                                'highpass': 200, 'volume': 0.9, 'reverse': False, 'bitcrush': 4,
+                                'flanger_delay': 0, 'flanger_depth': 0, 'tremolo_freq': 0, 'tremolo_depth': 0.0,
+                                'vibrato_freq': 0, 'vibrato_depth': 0.0, 'phaser_speed': 0.0, 'chorus_depth': 0,
+                                'noise_amount': 30, 'telephone': False, 'mono': True,
+                                'sample_rate': 8000, 'vinyl_crackle': 20, **{k: v for k, v in self._new_param_defaults.items()
+                                if k not in ['sample_rate', 'vinyl_crackle']}},
         }
 
         # Load custom audio presets
@@ -613,6 +723,48 @@ class AudioEffectsPanel:
         self.create_slider(mod_frame, 'vibrato_depth', 'Vibrato Depth', 0.0, 1.0, 0.0, 0.05)
         self.create_slider(mod_frame, 'phaser_speed', 'Phaser Speed', 0.0, 2.0, 0.0, 0.1)
         self.create_slider(mod_frame, 'chorus_depth', 'Chorus Depth', 0, 10, 0, 1)
+
+        # Separator
+        ttk.Separator(scrollable_frame, orient='horizontal').pack(fill=tk.X, pady=10, padx=10)
+
+        # ===== NEW SAMPLING & GLITCH EFFECTS =====
+        sample_label = tk.Label(scrollable_frame, text="🎛️ SAMPLING & GLITCH", font=("Arial", 12, "bold"), fg="#9C27B0")
+        sample_label.pack(pady=5)
+
+        # Stutter/Glitch Effects
+        stutter_frame = tk.LabelFrame(scrollable_frame, text="Stutter & Glitch", font=("Arial", 10, "bold"))
+        stutter_frame.pack(pady=5, padx=10, fill=tk.X)
+
+        self.create_slider(stutter_frame, 'stutter_count', 'Stutter Repeats', 0, 16, 0, 1)
+        self.create_slider(stutter_frame, 'stutter_length', 'Stutter Length (ms)', 10, 500, 100, 10)
+        self.create_slider(stutter_frame, 'ring_mod_freq', 'Ring Mod (Hz)', 0, 2000, 0, 50)
+
+        # Lo-Fi & Vintage
+        lofi_frame = tk.LabelFrame(scrollable_frame, text="Lo-Fi & Vintage", font=("Arial", 10, "bold"))
+        lofi_frame.pack(pady=5, padx=10, fill=tk.X)
+
+        self.create_slider(lofi_frame, 'sample_rate', 'Sample Rate', 4000, 44100, 44100, 1000)
+        self.create_slider(lofi_frame, 'vinyl_crackle', 'Vinyl Crackle', 0, 100, 0, 5)
+        self.create_slider(lofi_frame, 'tape_wobble', 'Tape Wobble', 0.0, 1.0, 0.0, 0.05)
+        self.create_slider(lofi_frame, 'radio_static', 'Radio Static', 0, 100, 0, 5)
+
+        # Dynamics
+        dynamics_frame = tk.LabelFrame(scrollable_frame, text="Dynamics & Width", font=("Arial", 10, "bold"))
+        dynamics_frame.pack(pady=5, padx=10, fill=tk.X)
+
+        self.create_slider(dynamics_frame, 'compressor', 'Compressor', 0, 100, 0, 5)
+        self.create_slider(dynamics_frame, 'gate_threshold', 'Noise Gate', 0, 100, 0, 5)
+        self.create_slider(dynamics_frame, 'stereo_width', 'Stereo Width', 0, 200, 100, 10)
+
+        # Trimming & Fades
+        trim_frame = tk.LabelFrame(scrollable_frame, text="Trim & Fades", font=("Arial", 10, "bold"))
+        trim_frame.pack(pady=5, padx=10, fill=tk.X)
+
+        self.create_slider(trim_frame, 'trim_start', 'Trim Start (%)', 0, 100, 0, 1)
+        self.create_slider(trim_frame, 'trim_end', 'Trim End (%)', 0, 100, 100, 1)
+        self.create_slider(trim_frame, 'fade_in', 'Fade In (ms)', 0, 5000, 0, 100)
+        self.create_slider(trim_frame, 'fade_out', 'Fade Out (ms)', 0, 5000, 0, 100)
+
         # Checkboxes for toggle effects
         toggle_frame = tk.LabelFrame(scrollable_frame, text="Toggle Effects", font=("Arial", 10, "bold"))
         toggle_frame.pack(pady=5, padx=10, fill=tk.X)
@@ -631,6 +783,44 @@ class AudioEffectsPanel:
         telephone_cb = tk.Checkbutton(toggle_frame, text="Telephone Effect", variable=self.telephone_var,
                                        command=lambda: self.update_param('telephone', self.telephone_var.get()))
         telephone_cb.pack(anchor='w', padx=5)
+
+        # Voice Effects (new toggles)
+        voice_frame = tk.LabelFrame(scrollable_frame, text="Voice & Character Effects", font=("Arial", 10, "bold"))
+        voice_frame.pack(pady=5, padx=10, fill=tk.X)
+
+        self.megaphone_var = tk.BooleanVar(value=False)
+        megaphone_cb = tk.Checkbutton(voice_frame, text="Megaphone/Bullhorn", variable=self.megaphone_var,
+                                       command=lambda: self.update_param('megaphone', self.megaphone_var.get()))
+        megaphone_cb.pack(anchor='w', padx=5)
+
+        self.whisper_var = tk.BooleanVar(value=False)
+        whisper_cb = tk.Checkbutton(voice_frame, text="Whisper Effect", variable=self.whisper_var,
+                                     command=lambda: self.update_param('whisper', self.whisper_var.get()))
+        whisper_cb.pack(anchor='w', padx=5)
+
+        self.robot_var = tk.BooleanVar(value=False)
+        robot_cb = tk.Checkbutton(voice_frame, text="Robot Voice", variable=self.robot_var,
+                                   command=lambda: self.update_param('robot_voice', self.robot_var.get()))
+        robot_cb.pack(anchor='w', padx=5)
+
+        # Tape Effects
+        tape_frame = tk.LabelFrame(scrollable_frame, text="Tape Effects", font=("Arial", 10, "bold"))
+        tape_frame.pack(pady=5, padx=10, fill=tk.X)
+
+        self.tape_stop_var = tk.BooleanVar(value=False)
+        tape_stop_cb = tk.Checkbutton(tape_frame, text="Tape Stop (Slowdown)", variable=self.tape_stop_var,
+                                       command=lambda: self.update_param('tape_stop', self.tape_stop_var.get()))
+        tape_stop_cb.pack(anchor='w', padx=5)
+
+        self.tape_start_var = tk.BooleanVar(value=False)
+        tape_start_cb = tk.Checkbutton(tape_frame, text="Tape Start (Speedup)", variable=self.tape_start_var,
+                                        command=lambda: self.update_param('tape_start', self.tape_start_var.get()))
+        tape_start_cb.pack(anchor='w', padx=5)
+
+        self.underwater_bubble_var = tk.BooleanVar(value=False)
+        bubble_cb = tk.Checkbutton(tape_frame, text="Underwater Bubbles", variable=self.underwater_bubble_var,
+                                    command=lambda: self.update_param('underwater_bubble', self.underwater_bubble_var.get()))
+        bubble_cb.pack(anchor='w', padx=5)
 
         # Reset button
         reset_btn = tk.Button(scrollable_frame, text="Reset All to Default", command=self.reset_effects,
@@ -662,7 +852,9 @@ class AudioEffectsPanel:
 
     def update_param(self, key, value):
         """Update an audio parameter."""
-        if key in ('reverse', 'mono', 'telephone'):
+        bool_params = ('reverse', 'mono', 'telephone', 'robot_voice', 'whisper',
+                       'megaphone', 'underwater_bubble', 'tape_stop', 'tape_start')
+        if key in bool_params:
             self.audio_params[key] = bool(value)
         elif isinstance(value, str):
             try:
@@ -680,12 +872,25 @@ class AudioEffectsPanel:
                 self.audio_params[key] = value
                 if key in self.slider_vars:
                     self.slider_vars[key].set(value)
+                # Update all boolean checkbox variables
                 elif key == 'reverse' and hasattr(self, 'reverse_var'):
                     self.reverse_var.set(value)
                 elif key == 'mono' and hasattr(self, 'mono_var'):
                     self.mono_var.set(value)
                 elif key == 'telephone' and hasattr(self, 'telephone_var'):
                     self.telephone_var.set(value)
+                elif key == 'megaphone' and hasattr(self, 'megaphone_var'):
+                    self.megaphone_var.set(value)
+                elif key == 'whisper' and hasattr(self, 'whisper_var'):
+                    self.whisper_var.set(value)
+                elif key == 'robot_voice' and hasattr(self, 'robot_var'):
+                    self.robot_var.set(value)
+                elif key == 'tape_stop' and hasattr(self, 'tape_stop_var'):
+                    self.tape_stop_var.set(value)
+                elif key == 'tape_start' and hasattr(self, 'tape_start_var'):
+                    self.tape_start_var.set(value)
+                elif key == 'underwater_bubble' and hasattr(self, 'underwater_bubble_var'):
+                    self.underwater_bubble_var.set(value)
             print(f"Applied preset: {preset_name}")
             self.status_label.config(text=f"Preset applied: {preset_name}")
 
@@ -793,6 +998,62 @@ class AudioEffectsPanel:
         if bitcrush < 16:
             filters.append(f"acrusher=bits={bitcrush}:mode=log")
 
+        # Sample rate reduction (lo-fi effect)
+        sample_rate = self.audio_params.get('sample_rate', 44100)
+        if sample_rate < 44100:
+            filters.append(f"aresample={sample_rate},aresample=44100")
+
+        # Ring modulation (metallic/robotic effect)
+        ring_mod_freq = self.audio_params.get('ring_mod_freq', 0)
+        if ring_mod_freq > 0:
+            # Use tremolo at audio rate for ring mod simulation
+            filters.append(f"tremolo=f={ring_mod_freq}:d=1")
+
+        # Compressor/limiter
+        compressor = self.audio_params.get('compressor', 0)
+        if compressor > 0:
+            threshold = max(0.01, 1.0 - (compressor / 100))
+            ratio = 1 + (compressor / 10)
+            filters.append(f"acompressor=threshold={threshold}:ratio={ratio}:attack=5:release=50")
+
+        # Noise gate
+        gate_threshold = self.audio_params.get('gate_threshold', 0)
+        if gate_threshold > 0:
+            gate_db = -60 + (gate_threshold * 0.5)  # Map 0-100 to -60 to -10 dB
+            filters.append(f"agate=threshold={gate_db}dB:attack=5:release=50")
+
+        # Stereo width adjustment
+        stereo_width = self.audio_params.get('stereo_width', 100)
+        if stereo_width != 100:
+            width_factor = stereo_width / 100.0
+            if width_factor < 1.0:
+                # Narrow stereo (towards mono)
+                mix = 1.0 - width_factor
+                filters.append(f"stereotools=mlev={mix}")
+            else:
+                # Wide stereo
+                delay = int((width_factor - 1.0) * 20)  # 0-20ms delay for widening
+                if delay > 0:
+                    filters.append(f"extrastereo=m={width_factor}")
+
+        # Megaphone effect
+        if self.audio_params.get('megaphone', False):
+            filters.append("highpass=f=500,lowpass=f=4000,acrusher=bits=8:mix=0.3")
+
+        # Whisper effect (breathy)
+        if self.audio_params.get('whisper', False):
+            filters.append("highpass=f=300,lowpass=f=5000,acompressor=threshold=0.2:ratio=8,volume=0.7")
+
+        # Robot voice effect
+        if self.audio_params.get('robot_voice', False):
+            filters.append("asetrate=44100*0.9,aresample=44100,afftfilt=real='hypot(re,im)*cos(0)':imag='hypot(re,im)*sin(0)'")
+
+        # Tape wobble (wow and flutter)
+        tape_wobble = self.audio_params.get('tape_wobble', 0)
+        if tape_wobble > 0:
+            wobble_depth = tape_wobble * 0.5  # Scale down for subtle effect
+            filters.append(f"vibrato=f=2:d={wobble_depth}")
+
         # Add noise/static - we'll handle this separately in apply_audio_effects
         # since it requires mixing two audio sources
 
@@ -800,10 +1061,27 @@ class AudioEffectsPanel:
         if self.audio_params.get('mono', False):
             filters.append("pan=mono|c0=0.5*c0+0.5*c1")
 
+        # Fade in
+        fade_in = self.audio_params.get('fade_in', 0)
+        if fade_in > 0:
+            fade_in_sec = fade_in / 1000.0
+            filters.append(f"afade=t=in:st=0:d={fade_in_sec}")
+
+        # Fade out will be handled in apply_audio_effects since we need duration
+
         # Volume
         volume = self.audio_params['volume']
         if volume != 1.0:
             filters.append(f"volume={volume}")
+
+        # Tape stop effect (dramatic slowdown)
+        if self.audio_params.get('tape_stop', False):
+            # Create a tape stop effect by slowing down exponentially at the end
+            filters.append("asetrate=44100*0.3,aresample=44100")
+
+        # Tape start effect (speed up from slow)
+        if self.audio_params.get('tape_start', False):
+            filters.append("asetrate=44100*1.5,aresample=44100")
 
         # Reverse (should be last for proper effect)
         if self.audio_params['reverse']:
@@ -824,24 +1102,98 @@ class AudioEffectsPanel:
 
         filter_chain = self.build_ffmpeg_filter()
         noise_amount = self.audio_params.get('noise_amount', 0)
+        vinyl_crackle = self.audio_params.get('vinyl_crackle', 0)
+        radio_static = self.audio_params.get('radio_static', 0)
+        stutter_count = self.audio_params.get('stutter_count', 0)
+        stutter_length = self.audio_params.get('stutter_length', 100)
+        fade_out = self.audio_params.get('fade_out', 0)
+        trim_start = self.audio_params.get('trim_start', 0)
+        trim_end = self.audio_params.get('trim_end', 100)
 
         print(f"Applying audio filter: {filter_chain}")
 
         try:
-            if noise_amount > 0:
-                # Use complex filter to mix noise with audio
-                noise_vol = noise_amount / 100  # Scale 0-100 to 0-1
-                # Get audio duration first
-                probe_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-                            "-of", "default=noprint_wrappers=1:nokey=1", self.original_audio_path]
-                probe_result = subprocess.run(probe_cmd, capture_output=True, text=True)
-                duration = float(probe_result.stdout.strip()) if probe_result.returncode == 0 else 10
+            # Get audio duration first
+            probe_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                        "-of", "default=noprint_wrappers=1:nokey=1", self.original_audio_path]
+            probe_result = subprocess.run(probe_cmd, capture_output=True, text=True)
+            duration = float(probe_result.stdout.strip()) if probe_result.returncode == 0 else 10
 
-                # Build complex filter: apply effects to input, generate noise, mix them
-                if filter_chain != "anull":
-                    complex_filter = f"[0:a]{filter_chain}[processed];anoisesrc=d={duration}:c=pink:a={noise_vol}[noise];[processed][noise]amix=inputs=2:duration=first:weights=1 {noise_vol}[out]"
+            # Calculate trim points
+            start_time = (trim_start / 100.0) * duration
+            end_time = (trim_end / 100.0) * duration
+            trimmed_duration = end_time - start_time
+
+            # Check if we need complex filter (noise, vinyl, radio static, stutter)
+            needs_complex = (noise_amount > 0 or vinyl_crackle > 0 or
+                           radio_static > 0 or stutter_count > 0 or
+                           fade_out > 0 or trim_start > 0 or trim_end < 100)
+
+            if needs_complex:
+                # Build complex filter with multiple noise sources
+                filter_parts = []
+                noise_sources = []
+                source_idx = 0
+
+                # Start with trimming if needed
+                if trim_start > 0 or trim_end < 100:
+                    input_filter = f"[0:a]atrim=start={start_time}:end={end_time},asetpts=PTS-STARTPTS"
                 else:
-                    complex_filter = f"[0:a]acopy[processed];anoisesrc=d={duration}:c=pink:a={noise_vol}[noise];[processed][noise]amix=inputs=2:duration=first:weights=1 {noise_vol}[out]"
+                    input_filter = "[0:a]acopy"
+
+                # Apply main filter chain
+                if filter_chain != "anull":
+                    input_filter += f",{filter_chain}"
+
+                # Add fade out if specified
+                if fade_out > 0:
+                    fade_out_sec = fade_out / 1000.0
+                    fade_start = max(0, trimmed_duration - fade_out_sec)
+                    input_filter += f",afade=t=out:st={fade_start}:d={fade_out_sec}"
+
+                input_filter += "[processed]"
+                filter_parts.append(input_filter)
+
+                # Regular noise
+                if noise_amount > 0:
+                    noise_vol = noise_amount / 100
+                    filter_parts.append(f"anoisesrc=d={trimmed_duration}:c=pink:a={noise_vol}[noise{source_idx}]")
+                    noise_sources.append(f"[noise{source_idx}]")
+                    source_idx += 1
+
+                # Vinyl crackle (using brown noise with filtering for crackle effect)
+                if vinyl_crackle > 0:
+                    crackle_vol = vinyl_crackle / 200  # Lower volume for crackle
+                    filter_parts.append(f"anoisesrc=d={trimmed_duration}:c=brown:a={crackle_vol},highpass=f=1000,lowpass=f=4000,acompressor=threshold=0.3:ratio=10[crackle{source_idx}]")
+                    noise_sources.append(f"[crackle{source_idx}]")
+                    source_idx += 1
+
+                # Radio static (white noise with specific filtering)
+                if radio_static > 0:
+                    static_vol = radio_static / 150
+                    filter_parts.append(f"anoisesrc=d={trimmed_duration}:c=white:a={static_vol},highpass=f=200,lowpass=f=8000,tremolo=f=10:d=0.3[static{source_idx}]")
+                    noise_sources.append(f"[static{source_idx}]")
+                    source_idx += 1
+
+                # Build the mix filter
+                if noise_sources:
+                    all_sources = "[processed]" + "".join(noise_sources)
+                    num_inputs = 1 + len(noise_sources)
+                    weights = "1 " + " ".join(["0.5"] * len(noise_sources))
+                    filter_parts.append(f"{all_sources}amix=inputs={num_inputs}:duration=first:weights={weights}[mixed]")
+                    final_output = "[mixed]"
+                else:
+                    final_output = "[processed]"
+
+                # Stutter effect (repeat small segments)
+                if stutter_count > 0:
+                    stutter_sec = stutter_length / 1000.0
+                    # Create stutter by using aloop
+                    filter_parts.append(f"{final_output}aloop=loop={stutter_count}:size={int(44100 * stutter_sec)}[out]")
+                else:
+                    filter_parts.append(f"{final_output}acopy[out]")
+
+                complex_filter = ";".join(filter_parts)
 
                 cmd = [
                     "ffmpeg", "-y",
@@ -869,6 +1221,21 @@ class AudioEffectsPanel:
                 return True
             else:
                 print(f"FFmpeg error: {result.stderr}")
+                # Try simpler filter if complex one failed
+                if needs_complex:
+                    print("Trying simpler filter...")
+                    simple_cmd = [
+                        "ffmpeg", "-y",
+                        "-i", self.original_audio_path,
+                        "-af", filter_chain if filter_chain != "anull" else "acopy",
+                        "-ar", "44100",
+                        "-ac", "2",
+                        output_path
+                    ]
+                    result = subprocess.run(simple_cmd, capture_output=True, text=True)
+                    if result.returncode == 0:
+                        print(f"Audio effects applied (simplified): {output_path}")
+                        return True
                 return False
         except Exception as e:
             print(f"Error applying effects: {e}")

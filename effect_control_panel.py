@@ -25,6 +25,7 @@ class EffectControlPanel:
         self.timeline_mode_label = None
         self.timeline_mode_var = None
         self.preview_scale_var = None
+        self.show_fps_var = None  # FPS counter toggle
         self.source_label = None  # Label showing current source
 
         # Define effects with their parameters
@@ -210,7 +211,19 @@ class EffectControlPanel:
                 canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
             except tk.TclError:
                 pass
-        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        # Bind mousewheel only when over this canvas
+        def _bind_mousewheel(event):
+            canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        def _unbind_mousewheel(event):
+            try:
+                canvas.unbind_all("<MouseWheel>")
+            except tk.TclError:
+                pass
+
+        canvas.bind("<Enter>", _bind_mousewheel)
+        canvas.bind("<Leave>", _unbind_mousewheel)
 
         scrollbar.pack(side="right", fill="y")
         canvas.pack(side="left", fill="both", expand=True)
@@ -276,6 +289,14 @@ class EffectControlPanel:
             text="Tip: Press 'Space' to pause, '`' for effects, 'Tab' for timeline mode",
             font=("Arial", 8), fg="gray")
         hint_label.pack(anchor='w')
+
+        # FPS display toggle
+        fps_frame = tk.Frame(preview_frame)
+        fps_frame.pack(fill=tk.X, pady=2)
+        self.show_fps_var = tk.BooleanVar(value=False)
+        fps_check = tk.Checkbutton(fps_frame, text="Show FPS Counter",
+            variable=self.show_fps_var, font=("Arial", 9))
+        fps_check.pack(side=tk.LEFT)
 
         self.timeline_mode_var = tk.BooleanVar(value=False)
         timeline_frame = tk.Frame(scrollable_frame, bg="#1a1a2e")
