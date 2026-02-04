@@ -63,8 +63,8 @@ A real-time video effects editor with face detection, custom masks, and data vis
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/yourusername/glitch-mirror.git
-   cd glitch-mirror
+   git clone https://github.com/Sad-Sun678/Glitch-Editor.git
+   cd Glitch-Editor
    ```
 
 2. **Install dependencies**
