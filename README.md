@@ -6,9 +6,15 @@
 
 A real-time video effects editor with face detection, custom masks, and data visualization overlays. Apply glitch effects, textures, and visual filters to webcam feeds, videos, or images.
 
-<!-- Add screenshots here when available -->
-<!-- ![Glitch Mirror Demo](screenshots/demo.png) -->
+![Glitch Mirror Demo](screenshots/screenshot_ui.png)
 
+### More Examples
+
+|                                                     |                                                     |
+|:---------------------------------------------------:|:---------------------------------------------------:|
+|  ![Example 1](screenshots/output_with_effects.png)  | ![Example 2](screenshots/output_with_effects_0.png) |
+| ![Example 3](screenshots/output_with_effects_1.png) | ![Example 4](screenshots/output_with_effects-.png)  |
+|      ![Example 5](screenshots/final_form.png)|       ![Example5](screenshots/odd_shape.png)        |
 ## Features
 
 ### Real-Time Face Detection & Tracking
