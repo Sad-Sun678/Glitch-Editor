@@ -230,6 +230,7 @@ glitch-mirror/
 | ffmpeg not found | Install ffmpeg and add to system PATH |
 | Laggy performance | Lower detection sensitivity, disable unused features |
 | Tracking IDs changing | Use "Keep" button on important detections |
+| Program Crashing | Don't do what you just did ever again|
 
 ---
 
