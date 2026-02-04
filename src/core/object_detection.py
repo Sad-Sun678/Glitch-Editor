@@ -1219,23 +1219,58 @@ class DetectionTracker:
         return det_id
 
     def _match_or_create(self, det, detection_type):
-        """Match detection to existing tracked ID or create new one."""
+        """Match detection to existing tracked ID or create new one.
+
+        Prioritizes matching to 'kept' detections (those with effects/baked)
+        to prevent losing effect assignments when faces move slightly.
+        """
         x, y, w, h = det
         center = (x + w // 2, y + h // 2)
+        max_dim = max(w, h)
 
-        # Find best matching tracked detection
+        # First pass: try to match to KEPT detections (those with effects/baked)
+        # Use a more lenient threshold for kept detections
+        best_kept_match = None
+        best_kept_dist = float('inf')
+
+        for det_id in self.kept_regions:
+            if det_id not in self.tracked_detections:
+                continue
+            tracked = self.tracked_detections[det_id]
+            if tracked['type'] != detection_type:
+                continue
+
+            tx, ty = tracked['center']
+            dist = np.sqrt((center[0] - tx) ** 2 + (center[1] - ty) ** 2)
+
+            # More lenient threshold for kept detections (3x instead of 1.5x)
+            if dist < max_dim * 3.0 and dist < best_kept_dist:
+                best_kept_dist = dist
+                best_kept_match = det_id
+
+        if best_kept_match is not None:
+            # Update existing kept detection
+            self.tracked_detections[best_kept_match]['rect'] = det
+            self.tracked_detections[best_kept_match]['center'] = center
+            self.tracked_detections[best_kept_match]['last_seen'] = 0
+            return best_kept_match
+
+        # Second pass: match to any tracked detection
         best_match = None
         best_dist = float('inf')
 
         for det_id, tracked in self.tracked_detections.items():
             if tracked['type'] != detection_type:
                 continue
+            # Skip kept regions (already checked above)
+            if det_id in self.kept_regions:
+                continue
 
             tx, ty = tracked['center']
             dist = np.sqrt((center[0] - tx) ** 2 + (center[1] - ty) ** 2)
-            max_dim = max(w, h)
 
-            if dist < max_dim * 1.5 and dist < best_dist:
+            # Standard threshold for regular detections
+            if dist < max_dim * 2.0 and dist < best_dist:
                 best_dist = dist
                 best_match = det_id
 

@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
-import keyboard
-import effects
+# Note: keyboard library removed due to GIL threading issues during window resize
+# Using cv2.waitKey() for key detection instead
 import time
 import tkinter as tk
 from tkinter import filedialog, ttk, simpledialog, messagebox
@@ -14,17 +14,25 @@ import json
 import copy
 import sys
 
-# Import panel modules
-from effect_control_panel import EffectControlPanel
-from audio_effects_panel import AudioEffectsPanel
-from timeline_panel import TimelinePanel
-from detection_panel import DetectionControlPanel
-from panel_utils import PRESETS_DIR, VIDEO_PRESETS_FILE, AUDIO_PRESETS_FILE, TIMELINE_FILE, PYGAME_AVAILABLE
-import object_detection
+# Add src to path for imports
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'src'))
+
+# Import core modules
+from core import effects
+from core import object_detection
+
+# Import UI modules
+from ui.effect_control_panel import EffectControlPanel
+from ui.audio_effects_panel import AudioEffectsPanel
+from ui.timeline_panel import TimelinePanel
+from ui.detection_panel import DetectionControlPanel
+
+# Import utilities
+from utils.panel_utils import PRESETS_DIR, VIDEO_PRESETS_FILE, AUDIO_PRESETS_FILE, TIMELINE_FILE, PYGAME_AVAILABLE
 
 # Import performance optimizations
 try:
-    from performance import frame_skipper, perf_monitor, grayscale_cache
+    from core.performance import frame_skipper, perf_monitor, grayscale_cache
     PERF_AVAILABLE = True
 except ImportError:
     PERF_AVAILABLE = False
@@ -32,8 +40,14 @@ except ImportError:
 
 print("ffmpeg path:", shutil.which("ffmpeg"))
 
-# Track key states to detect single taps vs held keys
-keyboard_state = {}
+# Track key states for cv2.waitKey-based detection
+# Stores the key code from the previous cv2.waitKey call
+pending_key_code = -1  # Key to be processed at start of next frame
+keys_pressed_this_frame = set()  # Keys detected this frame
+
+# GUI update throttling to avoid GIL issues during rapid resize
+gui_update_counter = 0
+GUI_UPDATE_INTERVAL = 3  # Only do full update every N frames
 
 # Effect parameters dictionary - stores all adjustable parameters
 effect_params = {
@@ -246,25 +260,81 @@ def reset_all_effects():
     print(">>> ALL EFFECTS RESET <<<")
 
 
+# Key code mapping for cv2.waitKey (cross-platform)
+# OpenCV key codes vary by platform, this handles common cases
+KEY_CODE_MAP = {
+    # Letters (lowercase)
+    'a': ord('a'), 'b': ord('b'), 'c': ord('c'), 'd': ord('d'), 'e': ord('e'),
+    'f': ord('f'), 'g': ord('g'), 'h': ord('h'), 'i': ord('i'), 'j': ord('j'),
+    'k': ord('k'), 'l': ord('l'), 'm': ord('m'), 'n': ord('n'), 'o': ord('o'),
+    'p': ord('p'), 'q': ord('q'), 'r': ord('r'), 's': ord('s'), 't': ord('t'),
+    'u': ord('u'), 'v': ord('v'), 'w': ord('w'), 'x': ord('x'), 'y': ord('y'),
+    'z': ord('z'),
+    # Numbers
+    '0': ord('0'), '1': ord('1'), '2': ord('2'), '3': ord('3'), '4': ord('4'),
+    '5': ord('5'), '6': ord('6'), '7': ord('7'), '8': ord('8'), '9': ord('9'),
+    # Special characters
+    '`': ord('`'), '-': ord('-'), '=': ord('='), '[': ord('['), ']': ord(']'),
+    '\\': ord('\\'), ';': ord(';'), "'": ord("'"), ',': ord(','), '.': ord('.'),
+    '/': ord('/'), '*': ord('*'), '+': ord('+'),
+    'space': ord(' '), 'backspace': 8, 'tab': 9, 'enter': 13,
+    # Arrow keys (Windows OpenCV codes)
+    'left': 2424832, 'right': 2555904, 'up': 2490368, 'down': 2621440,
+    # Function keys (approximate - may vary by system)
+    'F1': 7340032, 'F2': 7405568, 'F3': 7471104, 'F4': 7536640,
+    'F5': 7602176, 'F6': 7667712, 'F7': 7733248, 'F8': 7798784,
+    'F9': 7864320, 'F10': 7929856, 'F11': 7995392, 'F12': 8060928,
+    # Navigation keys
+    'home': 2359296, 'end': 2293760, 'page up': 2162688, 'page down': 2228224,
+    'insert': 2949120, 'delete': 3014656,
+}
+
+# Alternative key codes for cross-platform compatibility
+KEY_CODE_MAP_ALT = {
+    # Arrow keys (alternative codes for some systems)
+    'left': 81, 'right': 83, 'up': 82, 'down': 84,
+}
+
+
 def was_key_just_pressed(key_name):
     """
-    Check if a key was just pressed (rising edge detection).
-    Returns True only on the first frame the key is pressed.
+    Check if a key was just pressed using cv2.waitKey results.
+    Returns True if the key matches what was pressed this frame.
+    No threading issues since it uses data from cv2.waitKey in main loop.
     """
-    is_currently_pressed = keyboard.is_pressed(key_name)
+    global keys_pressed_this_frame
+    return key_name.lower() in keys_pressed_this_frame
 
-    if key_name not in keyboard_state:
-        keyboard_state[key_name] = is_currently_pressed
-        return False
 
-    was_pressed_last_frame = keyboard_state[key_name]
+def process_key_input(key_code):
+    """
+    Process the key code from cv2.waitKey and update pressed keys set.
+    Call this once per frame with the result of cv2.waitKey.
+    """
+    global keys_pressed_this_frame
+    keys_pressed_this_frame.clear()
 
-    if is_currently_pressed and not was_pressed_last_frame:
-        keyboard_state[key_name] = is_currently_pressed
-        return True
+    if key_code == -1:
+        return
 
-    keyboard_state[key_name] = is_currently_pressed
-    return False
+    # Handle the key code - try to match to a key name
+    # First check direct matches
+    for key_name, code in KEY_CODE_MAP.items():
+        if key_code == code:
+            keys_pressed_this_frame.add(key_name.lower())
+            return
+
+    # Check alternative codes
+    for key_name, code in KEY_CODE_MAP_ALT.items():
+        if key_code == code:
+            keys_pressed_this_frame.add(key_name.lower())
+            return
+
+    # Handle lowercase/uppercase letters (cv2 returns lowercase by default)
+    if 0 <= key_code <= 127:
+        char = chr(key_code).lower()
+        if char.isalnum() or char in '`-=[]\\;\',./':
+            keys_pressed_this_frame.add(char)
 
 
 def apply_effects_to_frame(frame, prev_gray, frame_number, render_buffers):
@@ -980,7 +1050,10 @@ def render_video():
 
         # Allow GUI to update
         if frame_count % 10 == 0:
-            control_panel.root.update()
+            try:
+                control_panel.root.update()
+            except Exception:
+                pass
 
     # Restore original effect states/params
     for key in effect_states:
@@ -1191,12 +1264,16 @@ def mouse_callback(event, x, y, flags, param):
             custom_mask_manager.handle_mouse_up()
             mouse_dragging = False
 
-
+#i'm a cat. Meow!
 # Set up mouse callback (will be applied when window is created)
 cv2.namedWindow(window_title, cv2.WINDOW_AUTOSIZE)
 cv2.setMouseCallback(window_title, mouse_callback)
 
 while app_running:
+    # Process key input from previous frame's waitKey
+    process_key_input(pending_key_code)
+    pending_key_code = -1
+
     # Check for source change request
     if request_source_change:
         request_source_change = False
@@ -2208,8 +2285,9 @@ while app_running:
         effect_states['background_effect_enabled'] = not effect_states['background_effect_enabled']
         print(f"background_effect_enabled = {effect_states['background_effect_enabled']}")
 
-    # Debug: visualize background mask when holding M
-    if effect_states['background_effect_enabled'] and keyboard.is_pressed("m"):
+    # Debug: visualize background mask when M is pressed
+    # Note: This now uses cv2.waitKey detection, so it shows mask briefly when M is tapped
+    if effect_states['background_effect_enabled'] and was_key_just_pressed("m"):
         output_frame[static_background_mask] = (0, 255, 0)
 
     # Preset navigation
@@ -2379,44 +2457,6 @@ while app_running:
             camera.set(cv2.CAP_PROP_POS_FRAMES, 0)
             print("Video restarted")
 
-    # Update control panel GUI (with exception protection)
-    try:
-        control_panel.update()
-    except Exception:
-        pass
-
-    # Update audio panel GUI (if exists)
-    try:
-        if audio_panel:
-            audio_panel.update()
-    except Exception:
-        pass
-
-    # Update timeline panel GUI (if exists)
-    try:
-        if timeline_panel:
-            timeline_panel.update()
-    except Exception:
-        pass
-
-    # Update detection panel GUI
-    try:
-        if detection_panel:
-            detection_panel.update()
-    except Exception:
-        pass
-
-    # Quit application
-    try:
-        # Use frame_delay for video/image, 1 for webcam (for responsiveness)
-        wait_time = frame_delay if (is_video_file or is_image_file) else 1
-        key = cv2.waitKey(wait_time) & 0xFF
-        if key == ord("q"):
-            app_running = False
-            break
-    except Exception:
-        break
-
     # End frame timing and get FPS
     if PERF_AVAILABLE:
         perf_monitor.frame_end()
@@ -2441,7 +2481,54 @@ while app_running:
         cv2.putText(display_frame, fps_text, (10, 25),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 1)
 
-    cv2.imshow(window_title, display_frame)
+    # Display frame and get key input - these should be together
+    try:
+        cv2.imshow(window_title, display_frame)
+        # Get key input - cv2.waitKey must be called right after imshow
+        wait_time = frame_delay if (is_video_file or is_image_file) else 1
+        pending_key_code = cv2.waitKeyEx(wait_time)
+        if pending_key_code == ord("q"):
+            app_running = False
+            break
+    except Exception:
+        break
+
+    # Update GUI panels AFTER OpenCV operations are complete
+    # Throttle updates to avoid GIL issues during rapid resize events
+    gui_update_counter += 1
+    do_full_update = (gui_update_counter % GUI_UPDATE_INTERVAL == 0)
+
+    try:
+        if control_panel and getattr(control_panel, 'root', None) and getattr(control_panel, 'running', False):
+            control_panel.root.update_idletasks()
+            if do_full_update:
+                control_panel.root.update()
+    except Exception:
+        pass
+
+    try:
+        if audio_panel and getattr(audio_panel, 'root', None) and getattr(audio_panel, 'running', False):
+            audio_panel.root.update_idletasks()
+            if do_full_update:
+                audio_panel.root.update()
+    except Exception:
+        pass
+
+    try:
+        if timeline_panel and getattr(timeline_panel, 'root', None) and getattr(timeline_panel, 'running', False):
+            timeline_panel.root.update_idletasks()
+            if do_full_update:
+                timeline_panel.root.update()
+    except Exception:
+        pass
+
+    try:
+        if detection_panel and getattr(detection_panel, 'root', None) and getattr(detection_panel, 'running', False):
+            detection_panel.root.update_idletasks()
+            if do_full_update:
+                detection_panel.root.update()
+    except Exception:
+        pass
 
 # ----------------------------
 # Cleanup

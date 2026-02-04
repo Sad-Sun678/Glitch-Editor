@@ -1,0 +1,18 @@
+# Glitch Mirror - Dependencies
+# Install with: pip install -r requirements.txt
+
+# Core dependencies
+opencv-python>=4.5.0
+numpy>=1.19.0
+
+# GUI
+# tkinter is included with Python, no need to install
+
+# Image processing
+Pillow>=8.0.0
+
+# Audio processing (optional but recommended)
+pygame>=2.0.0
+
+# For building executable (optional)
+# pyinstaller>=5.0

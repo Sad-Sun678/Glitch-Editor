@@ -1,0 +1,82 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+develop-eggs/
+dist/
+# PyInstaller temp build directory (inside build/)
+build/temp/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# PyInstaller
+*.manifest
+*.spec.bak
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDE settings
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Project specific
+*.tar.xz
+*.tar.gz
+*.zip
+
+# Test files and outputs
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.gif
+*.png
+*.jpg
+*.jpeg
+!screenshots/*.png
+!screenshots/*.jpg
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+
+# Claude AI session files
+.claude/
+
+# Local configuration
+local_config.json
+secrets.json
+
+# Photos folder (user content)
+photos/
+
+# Keep presets folder but ignore user presets
+# presets/*.json

@@ -4,7 +4,7 @@ from tkinter import ttk, simpledialog
 import os
 import json
 
-from panel_utils import VIDEO_PRESETS_FILE
+from utils.panel_utils import VIDEO_PRESETS_FILE
 
 
 class EffectControlPanel:
@@ -456,12 +456,10 @@ class EffectControlPanel:
             self._resize_after_id = None
 
     def update(self):
-        """Update the panel (call from main loop)."""
+        """Update the panel (call from main loop). Main.py handles actual Tkinter updates."""
         if self.root and self.running:
             try:
                 self.sync_from_keyboard()
-                self.root.update_idletasks()
-                self.root.update()
             except tk.TclError:
                 self.running = False
             except RuntimeError:

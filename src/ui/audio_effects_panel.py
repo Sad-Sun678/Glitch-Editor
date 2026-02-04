@@ -9,10 +9,10 @@ import tempfile
 import threading
 import time
 
-from panel_utils import AUDIO_PRESETS_FILE, PYGAME_AVAILABLE
+from utils.panel_utils import AUDIO_PRESETS_FILE, PYGAME_AVAILABLE, init_pygame_mixer
 
-if PYGAME_AVAILABLE:
-    import pygame
+# Pygame will be imported and initialized on first audio playback
+pygame = None
 
 class AudioEffectsPanel:
     """A GUI panel for audio preview and effects."""
@@ -1261,7 +1261,7 @@ class AudioEffectsPanel:
 
         # CRITICAL: Stop any playing audio and unload it first to release the file lock
         self.stop_audio()
-        if PYGAME_AVAILABLE:
+        if PYGAME_AVAILABLE and pygame is not None:
             try:
                 pygame.mixer.music.unload()
             except:
@@ -1312,6 +1312,13 @@ class AudioEffectsPanel:
             return
 
         try:
+            # Initialize pygame mixer on first use
+            global pygame
+            if pygame is None:
+                init_pygame_mixer()
+                import pygame as _pygame
+                pygame = _pygame
+
             self.stop_audio()
             if PYGAME_AVAILABLE:
                 try:
@@ -1328,7 +1335,7 @@ class AudioEffectsPanel:
 
     def stop_audio(self):
         """Stop audio playback and release file lock."""
-        if PYGAME_AVAILABLE:
+        if PYGAME_AVAILABLE and pygame is not None:
             try:
                 pygame.mixer.music.stop()
                 pygame.mixer.music.unload()
@@ -1399,7 +1406,7 @@ class AudioEffectsPanel:
             self._resize_after_id = None
 
     def update(self):
-        """Update the panel (call from main loop)."""
+        """Update the panel (call from main loop). Main.py handles actual Tkinter updates."""
         if self.root and self.running:
             try:
                 if self.is_extracting:
@@ -1407,8 +1414,6 @@ class AudioEffectsPanel:
                 elif self.original_audio_path and os.path.exists(self.original_audio_path):
                     if not self.is_playing and "Extracting" in self.status_label.cget("text"):
                         self.status_label.config(text="Audio ready")
-                self.root.update_idletasks()
-                self.root.update()
             except (tk.TclError, RuntimeError):
                 self.running = False
             except Exception:

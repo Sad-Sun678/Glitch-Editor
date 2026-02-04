@@ -9,10 +9,10 @@ import tempfile
 import threading
 import time
 
-from panel_utils import VIDEO_PRESETS_FILE, PYGAME_AVAILABLE
+from utils.panel_utils import VIDEO_PRESETS_FILE, PYGAME_AVAILABLE, init_pygame_mixer
 
-if PYGAME_AVAILABLE:
-    import pygame
+# Pygame will be imported and initialized on first audio playback
+pygame = None
 
 class TimelinePanel:
     """A timeline editor for scheduling effects and audio tracks."""
@@ -55,8 +55,7 @@ class TimelinePanel:
 
         # Pygame channels for multi-track audio
         self.audio_channels = {}
-        if PYGAME_AVAILABLE:
-            pygame.mixer.set_num_channels(16)  # Allow up to 16 simultaneous audio tracks
+        # Note: pygame mixer initialization is deferred until first audio playback
 
     def load_video_presets(self):
         """Load video presets from file."""
@@ -943,6 +942,14 @@ TIPS:
 
         if audio_path and os.path.exists(audio_path):
             try:
+                # Initialize pygame mixer on first use
+                global pygame
+                if pygame is None:
+                    init_pygame_mixer()
+                    import pygame as _pygame
+                    pygame = _pygame
+                    pygame.mixer.set_num_channels(16)  # Allow up to 16 simultaneous audio tracks
+
                 sound = pygame.mixer.Sound(audio_path)
                 sound.set_volume(track.get('volume', 1.0))
                 sound.play()
@@ -959,8 +966,11 @@ TIPS:
     def stop_preview(self):
         """Stop timeline preview."""
         self.is_playing = False
-        if PYGAME_AVAILABLE:
-            pygame.mixer.stop()
+        if PYGAME_AVAILABLE and pygame is not None:
+            try:
+                pygame.mixer.stop()
+            except:
+                pass
 
     def _preview_loop(self):
         """Preview playback loop."""
@@ -1092,16 +1102,9 @@ TIPS:
         ]
 
     def update(self):
-        """Update the panel (call from main loop)."""
-        if self.root and self.running:
-            try:
-                
-                    self.root.update_idletasks()
-                    self.root.update()
-            except (tk.TclError, RuntimeError):
-                self.running = False
-            except Exception:
-                pass  # Ignore other errors during update
+        """Update the panel (call from main loop). Main.py handles actual Tkinter updates."""
+        # No-op - main.py handles the Tkinter update calls
+        pass
 
     def close(self):
         """Close the panel."""

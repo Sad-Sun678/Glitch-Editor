@@ -22,6 +22,10 @@ class DetectionControlPanel:
         self.root = None
         self.detection_params = detection_params
         self.created = False
+        self.running = False
+
+        # Resize handling with debounce
+        self._resize_after_id = None
 
         # UI variable references
         self.vars = {}
@@ -49,42 +53,31 @@ class DetectionControlPanel:
 
         self.root = tk.Toplevel()
         self.root.title("Detection & Effects")
-        self.root.geometry("400x700")
-        self.root.minsize(300, 400)
+        self.root.geometry("420x750")
+        # Disable resizing to prevent crashes
+        self.root.resizable(False, False)
 
-        # Create main scrollable frame with proper resize handling
+        # Create main scrollable frame
         main_frame = tk.Frame(self.root)
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        # Use grid for better resize behavior
-        main_frame.grid_rowconfigure(0, weight=1)
-        main_frame.grid_columnconfigure(0, weight=1)
-
-        self.canvas = tk.Canvas(main_frame, highlightthickness=0)
+        self.canvas = tk.Canvas(main_frame, highlightthickness=0, width=400)
         scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=self.canvas.yview)
         self.scrollable_frame = ttk.Frame(self.canvas)
 
-        # Create window in canvas
-        self.canvas_window = self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+        # Create window in canvas with fixed width
+        self.canvas_window = self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw", width=400)
 
-        # Configure scroll region when frame size changes
+        # Simple scroll region update
         def _configure_scroll(event):
+            if not self.running:
+                return
             try:
                 self.canvas.configure(scrollregion=self.canvas.bbox("all"))
-            except tk.TclError:
-                pass
-
-        # Configure canvas width when window resizes
-        def _configure_canvas(event):
-            try:
-                # Make scrollable frame fill canvas width
-                self.canvas.itemconfig(self.canvas_window, width=event.width)
-            except tk.TclError:
+            except (tk.TclError, RuntimeError):
                 pass
 
         self.scrollable_frame.bind("<Configure>", _configure_scroll)
-        self.canvas.bind("<Configure>", _configure_canvas)
-
         self.canvas.configure(yscrollcommand=scrollbar.set)
 
         # Pack canvas and scrollbar
@@ -134,6 +127,19 @@ class DetectionControlPanel:
         self._create_tools_tab()
 
         self.created = True
+        self.running = True
+
+    def _update_scroll_region(self):
+        """Update scroll region safely with debounce."""
+        if not self.running:
+            return
+        try:
+            if self.canvas and self.scrollable_frame:
+                self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        except (tk.TclError, RuntimeError):
+            pass
+        finally:
+            self._resize_after_id = None
 
     def _create_section_header(self, parent, text, collapsed=False):
         """Create a styled section header with optional collapse."""
@@ -864,7 +870,7 @@ class DetectionControlPanel:
         mask_frame = ttk.LabelFrame(parent, text="Custom Mask Regions", padding=5)
         mask_frame.pack(fill=tk.X, padx=5, pady=5)
 
-        import object_detection
+        from core import object_detection
         self.custom_mask_manager = object_detection.get_custom_mask_manager()
 
         self.vars['custom_masks_enabled'] = tk.BooleanVar(value=False)
@@ -1137,6 +1143,7 @@ class DetectionControlPanel:
 
         # Apply texture to each selected face
         applied_count = 0
+        tracker = self.detection_tracker
         for det_id in selected_ids:
             region_id = f"face_{det_id}"
 
@@ -1150,6 +1157,9 @@ class DetectionControlPanel:
                         blend_mode=blend_mode,
                         opacity=opacity
                     )
+                    # Auto-keep the detection so it maintains its ID
+                    if tracker:
+                        tracker.keep_detection(det_id)
                     applied_count += 1
             elif self._loaded_texture_type == 'image':
                 if self.region_effect_manager.load_image_texture(region_id, self._loaded_texture_path):
@@ -1160,6 +1170,9 @@ class DetectionControlPanel:
                         blend_mode=blend_mode,
                         opacity=opacity
                     )
+                    # Auto-keep the detection so it maintains its ID
+                    if tracker:
+                        tracker.keep_detection(det_id)
                     applied_count += 1
 
         print(f"Applied {self._loaded_texture_type} texture to {applied_count} face(s)")
@@ -1935,6 +1948,10 @@ class DetectionControlPanel:
             print("No effects to bake - add effects to the stack first or select a live effect")
             return
 
+        # Auto-keep the detections so they maintain their IDs after baking
+        for det_id in selected:
+            tracker.keep_detection(det_id)
+
         # Signal main loop to bake on next frame
         self.detection_params['bake_effect_stack'] = True
         self.detection_params['bake_selected_ids'] = list(selected)
@@ -1998,6 +2015,8 @@ class DetectionControlPanel:
                 stack_size = self.region_effect_manager.add_effect_to_stack(
                     region_key, effect_type, **effect_params
                 )
+                # Auto-keep the detection so it maintains its ID when effects are applied
+                tracker.keep_detection(det_id)
                 print(f"Added '{effect_type}' to stack for {region_key} (stack size: {stack_size})")
 
         # Update the stack display
@@ -2522,12 +2541,15 @@ class DetectionControlPanel:
 
         color_name = self.vars['box_color'].get()
         color_bgr = self._get_color_bgr(color_name)
+        tracker = self.detection_tracker
 
         for det_id in selected_ids:
             # Get or create settings for this detection
             settings = self.data_viz.get_detection_settings(det_id)
             settings['custom_color'] = color_bgr
-            print(f"  Set det_id {det_id} color to {color_name} {color_bgr}")
+            # Auto-keep the detection so it maintains its ID
+            if tracker:
+                tracker.keep_detection(det_id)
 
         print(f"Applied {color_name} box color to {len(selected_ids)} detection(s)")
 
@@ -2875,17 +2897,22 @@ class DetectionControlPanel:
             self.detection_params[key] = var.get()
 
     def update(self):
-        """Update the panel (call from main loop)."""
-        if self.root:
-            try:
-                self.root.update()
-            except tk.TclError:
-                pass
+        """Update the panel (call from main loop). Main.py handles actual Tkinter updates."""
+        # No-op - main.py handles the Tkinter update calls
+        pass
 
     def close(self):
         """Close the panel."""
+        self.running = False
         if self.root:
             try:
+                # Cancel any pending resize operations
+                if self._resize_after_id:
+                    try:
+                        self.root.after_cancel(self._resize_after_id)
+                    except:
+                        pass
+                    self._resize_after_id = None
                 self.root.destroy()
             except:
                 pass

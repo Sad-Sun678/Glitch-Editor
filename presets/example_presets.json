@@ -1,0 +1,25 @@
+{
+  "description": "Example presets for Glitch Mirror",
+  "presets": {
+    "cyberpunk": {
+      "effects": ["chromatic", "scanlines", "neon_glow"],
+      "description": "Cyberpunk-style neon effects"
+    },
+    "vhs_retro": {
+      "effects": ["vhs", "film_grain", "color_shift"],
+      "description": "Retro VHS tape look"
+    },
+    "glitch_art": {
+      "effects": ["glitch", "rgb_shift", "blocky_noise"],
+      "description": "Digital glitch aesthetic"
+    },
+    "thermal_vision": {
+      "effects": ["thermal"],
+      "description": "Thermal camera look"
+    },
+    "sketch_artistic": {
+      "effects": ["sketch", "edge_highlight"],
+      "description": "Pencil sketch style"
+    }
+  }
+}
