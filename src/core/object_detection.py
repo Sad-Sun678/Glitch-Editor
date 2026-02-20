@@ -41,7 +41,10 @@ except ImportError:
 
 def get_cascade_path(cascade_name):
     """Get the path to OpenCV's built-in cascade files."""
-    cv2_data_path = cv2.data.haarcascades
+    if hasattr(cv2, 'data') and hasattr(cv2.data, 'haarcascades'):
+        cv2_data_path = cv2.data.haarcascades
+    else:
+        cv2_data_path = os.path.join(os.path.dirname(cv2.__file__), 'data')
     return os.path.join(cv2_data_path, cascade_name)
 
 
