@@ -672,7 +672,18 @@ def initialize_media_source(selected_source_type, selected_source_path):
     }
 
     if selected_source_type == 'webcam':
-        config['camera'] = cv2.VideoCapture(selected_source_path, cv2.CAP_DSHOW)
+        # CAP_DSHOW is Windows-only; use V4L2 on Linux, default elsewhere
+        if sys.platform == 'win32':
+            backend = cv2.CAP_DSHOW
+        elif sys.platform.startswith('linux'):
+            backend = cv2.CAP_V4L2
+        else:
+            backend = cv2.CAP_ANY
+        config['camera'] = cv2.VideoCapture(selected_source_path, backend)
+        if not config['camera'].isOpened():
+            print(f"Error: Could not open webcam (index {selected_source_path}). "
+                  "Check that the device is connected and not in use by another app.")
+            return None
         config['camera'].set(cv2.CAP_PROP_FRAME_WIDTH, 500)
         config['camera'].set(cv2.CAP_PROP_FRAME_HEIGHT, 500)
         config['frame_delay'] = 1
